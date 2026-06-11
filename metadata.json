@@ -1,0 +1,6 @@
+{
+  "name": "HR Desk",
+  "description": "Comprehensive HR & Payroll Manager. Features attendance ledgers, leave tracking, loans & salary advances, contract alerts, and payslip generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

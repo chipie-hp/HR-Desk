@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@450;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply antialiased font-sans bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100;
+  }
+}
+
+/* Print utility styles specifically targeting payroll payslips */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #print-zone, #print-zone * {
+    visibility: visible;
+  }
+  #print-zone {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 105%;
+  }
+}
