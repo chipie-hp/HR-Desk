@@ -585,26 +585,31 @@ export default function Employees({
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFirst || !newLast || !newPosition || !newBranch) return;
+    const firstClean = newFirst.trim();
+    const lastClean = newLast.trim();
+    if (!firstClean || !lastClean) return;
+
+    const positionToUse = newPosition.trim() || "Staff";
+    const branchToUse = newBranch.trim() || (selectedBranch !== "all" ? selectedBranch : (state.branches[0] || "Main Branch"));
 
     onAddEmployee({
-      first: capitalizeString(newFirst),
-      last: capitalizeString(newLast),
+      first: capitalizeString(firstClean),
+      last: capitalizeString(lastClean),
       gender: newGender,
-      position: newPosition,
+      position: capitalizeString(positionToUse),
       dept: newDept,
-      branch: newBranch || "Main Branch",
-      salary: Number(newSalary),
+      branch: branchToUse,
+      salary: Number(newSalary) || 250000,
       national: "",
       cstart: newCStart || new Date().toISOString().split("T")[0],
-      cend: newCEnd || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-      photo: getAvatarUrl(newGender, newFirst)
+      cend: newCEnd || new Date(Date.now() + 365 * 24 * 60 * 60 * 1056).toISOString().split("T")[0],
+      photo: getAvatarUrl(newGender, firstClean)
     });
 
     // Reset
     setNewFirst("");
     setNewLast("");
-    setNewGender("Female");
+    setNewGender("Male");
     setNewPosition("");
     setNewSalary(250000);
     setNewCStart("");
