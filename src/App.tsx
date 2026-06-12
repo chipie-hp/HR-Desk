@@ -33,6 +33,7 @@ import {
   DatabaseState, 
   Employee, 
   AttendanceRecord, 
+  AttendanceDatabase,
   DeductionApproval, 
   LeaveRequest, 
   Loan, 
@@ -175,6 +176,27 @@ export default function App() {
           };
         });
         showToast("Teammate profile permanently dismissed.", "success");
+      },
+      "danger"
+    );
+  };
+
+  // 2b. BULK REMOVE TEAMMATE PROFILES
+  const handleRemoveEmployees = (ids: string[]) => {
+    if (ids.length === 0) return;
+
+    showConfirm(
+      "Confirm Bulk Deletion",
+      `Are you sure you want to permanently delete the ${ids.length} selected employee profiles? This action is irreversible.`,
+      () => {
+        updateStateAndPersist(prev => {
+          addLogEvent("Staff Registry", `Bulk removed ${ids.length} profile records.`);
+          return {
+            ...prev,
+            employees: prev.employees.filter(e => !ids.includes(e.id))
+          };
+        });
+        showToast(`${ids.length} employee profiles permanently dismissed.`, "success");
       },
       "danger"
     );
@@ -335,6 +357,15 @@ export default function App() {
     });
   };
 
+  const handleUpdateFullAttendance = (updatedAttendance: AttendanceDatabase) => {
+    updateStateAndPersist(prev => {
+      return {
+        ...prev,
+        attendance: updatedAttendance
+      };
+    });
+  };
+
   // 13. ENFORCE PENALTIES FROM ABSENCE SWEEPMATCHES
   const handleApplyPenalty = (penalty: Omit<DeductionApproval, "id">) => {
     updateStateAndPersist(prev => {
@@ -477,6 +508,7 @@ export default function App() {
             state={dbState}
             onAddEmployee={handleAddEmployee}
             onRemoveEmployee={handleRemoveEmployee}
+            onRemoveEmployees={handleRemoveEmployees}
             onUpdateEmployee={handleUpdateEmployee}
             onAddBatch={handleAddBatch}
             targetDossierTab={targetDossierTab}
@@ -491,8 +523,10 @@ export default function App() {
           <Attendance
             state={dbState}
             onSaveAttendance={handleSaveAttendance}
+            onUpdateFullAttendance={handleUpdateFullAttendance}
             onApplyPenalty={handleApplyPenalty}
             onSelectEmployee={handleSelectEmployee}
+            onAddDocument={handleArchiveDocument}
             showToast={showToast}
           />
         );
@@ -825,6 +859,7 @@ export default function App() {
           state={dbState}
           onAddEmployee={handleAddEmployee}
           onRemoveEmployee={handleRemoveEmployee}
+          onRemoveEmployees={handleRemoveEmployees}
           onUpdateEmployee={handleUpdateEmployee}
           onAddBatch={handleAddBatch}
           targetDossierTab={targetDossierTab}

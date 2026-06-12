@@ -205,6 +205,7 @@ export default function Documents({
               <option value="National ID Copy">National ID Copy</option>
               <option value="Academic Certification Certificate">Academic Certification Certificate</option>
               <option value="Medical Health Assessment Form">Medical Health Assessment Form</option>
+              <option value="Health Passport Proof">Health Passport Proof (Medical)</option>
             </select>
           </div>
 

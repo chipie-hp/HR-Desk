@@ -94,6 +94,85 @@ export default function Settings({
     reader.readAsText(file);
   };
 
+  const [wipeBranch, setWipeBranch] = useState("all");
+  const [wipeCategories, setWipeCategories] = useState({
+    employees: true,
+    attendance: true,
+    leave: true,
+    financials: true,
+    compliance: true,
+    documents: true,
+  });
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  const [confirmValue, setConfirmValue] = useState("");
+
+  const executeWipe = () => {
+    if (confirmValue.trim().toUpperCase() !== "WIPE") {
+      showToast("Verification text does not match. Action aborted.", "error");
+      return;
+    }
+
+    // Collect active employee IDs for the target branch
+    const employeesOfBranch = state.employees.filter(
+      emp => wipeBranch === "all" || emp.branch === wipeBranch
+    );
+    const empIdsToWipe = new Set(employeesOfBranch.map(emp => emp.id));
+
+    // Construct the new state
+    const newState = { ...state };
+
+    if (wipeCategories.employees) {
+      newState.employees = state.employees.filter(emp => !empIdsToWipe.has(emp.id));
+    }
+
+    if (wipeCategories.attendance) {
+      const updatedAttendance = { ...state.attendance };
+      if (wipeBranch === "all") {
+        newState.attendance = {};
+      } else {
+        Object.keys(updatedAttendance).forEach(dateStr => {
+          const dayRecord = { ...updatedAttendance[dateStr] };
+          Object.keys(dayRecord).forEach(empId => {
+            if (empIdsToWipe.has(empId)) {
+              delete dayRecord[empId];
+            }
+          });
+          updatedAttendance[dateStr] = dayRecord;
+        });
+        newState.attendance = updatedAttendance;
+      }
+    }
+
+    if (wipeCategories.leave) {
+      newState.leave = state.leave.filter(l => !empIdsToWipe.has(l.empId));
+    }
+
+    if (wipeCategories.financials) {
+      newState.loans = state.loans.filter(l => !empIdsToWipe.has(l.empId));
+      newState.advances = state.advances.filter(a => !empIdsToWipe.has(a.empId));
+      newState.deductionApprovals = state.deductionApprovals.filter(d => !empIdsToWipe.has(d.empId));
+      newState.payroll = state.payroll.filter(p => !empIdsToWipe.has(p.id));
+    }
+
+    if (wipeCategories.compliance) {
+      newState.disciplinary = state.disciplinary.filter(d => !empIdsToWipe.has(d.empId));
+    }
+
+    if (wipeCategories.documents) {
+      newState.documents = state.documents.filter(d => !empIdsToWipe.has(d.empId));
+    }
+
+    onRestoreDatabase(newState);
+    setShowWipeConfirm(false);
+    setConfirmValue("");
+    showToast(
+      `Irreversible wipe executed for ${
+        wipeBranch === "all" ? "all branches" : wipeBranch
+      } datasets.`,
+      "success"
+    );
+  };
+
   return (
     <div className="space-y-8 animate-fade-in max-w-4xl">
       {/* Parameter Cards Grid list */}
@@ -254,6 +333,120 @@ export default function Settings({
             />
           </div>
         </div>
+      </div>
+
+      {/* Administrative Clearing System control */}
+      <div className="rounded-2xl border border-red-200 bg-red-50/5 p-6 shadow-sm dark:border-red-950/20 dark:bg-rose-950/5">
+        <div className="flex items-center gap-2.5 mb-4 text-red-600 dark:text-red-400">
+          <ShieldAlert className="h-5 w-5" />
+          <h3 className="text-sm font-semibold uppercase tracking-wider">
+            Administrative Desk Data Wiping Control
+          </h3>
+        </div>
+
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+          Wipe and format specific branches or whole organization categories. <strong>Warning: Wiped data is permanently deleted from offline local memory.</strong>
+        </p>
+
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-5 mb-5 animate-fade-in">
+          {/* Target Branch selection */}
+          <div>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider dark:text-slate-400 mb-2">
+              1. Choose Branch Target boundary
+            </label>
+            <select
+              value={wipeBranch}
+              onChange={(e) => setWipeBranch(e.target.value)}
+              className="w-full rounded-xl border border-slate-205 bg-white py-2 px-3.5 text-sm font-bold focus:border-red-500 focus:outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-slate-101"
+            >
+              <option value="all">All Branches (Whole Organization)</option>
+              {state.branches.map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Categories select checkboxes */}
+          <div>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider dark:text-slate-400 mb-2.5">
+              2. Select categories to wipe
+            </label>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {Object.keys(wipeCategories).map(catKey => {
+                const labelMap: Record<string, string> = {
+                  employees: "Employees Portfolios",
+                  attendance: "Attendance Records",
+                  leave: "Leave Requests",
+                  financials: "Financials (Loans/Advances/Negligences)",
+                  compliance: "Disciplinary Logbook",
+                  documents: "Documents Vault",
+                };
+                return (
+                  <label key={catKey} className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={wipeCategories[catKey as keyof typeof wipeCategories]}
+                      onChange={(e) => setWipeCategories(prev => ({ ...prev, [catKey]: e.target.checked }))}
+                      className="rounded text-red-600 focus:ring-red-55 accent-red-600 h-3.5 w-3.5"
+                    />
+                    <span>{labelMap[catKey] || catKey}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Trigger / Confirm Section */}
+        {!showWipeConfirm ? (
+          <button
+            type="button"
+            onClick={() => {
+              // Ensure at least one category is checked
+              const noneSelected = Object.values(wipeCategories).every(v => !v);
+              if (noneSelected) {
+                showToast("Please select at least one database category to wipe.", "error");
+                return;
+              }
+              setShowWipeConfirm(true);
+            }}
+            className="rounded-xl bg-red-600 text-white font-bold text-xs py-2.5 px-5 hover:bg-red-700 transition"
+          >
+            ⚠️ Erase Selected Datasets
+          </button>
+        ) : (
+          <div className="bg-red-50 dark:bg-rose-950/20 rounded-xl p-4 border border-red-100 dark:border-red-900/10 space-y-3.5 max-w-md animate-fade-in">
+            <p className="text-xs font-bold text-red-800 dark:text-red-400">
+              Type the word <span className="underline font-black text-sm select-all">WIPE</span> into the verification box below to authorize permanent deletion of database:
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Enter WIPE here"
+                value={confirmValue}
+                onChange={(e) => setConfirmValue(e.target.value)}
+                className="flex-1 rounded-lg border border-red-300 bg-white py-1.5 px-3 text-xs font-black uppercase text-red-700 focus:outline-none focus:ring-1 focus:ring-red-500 dark:bg-slate-950 dark:border-rose-950"
+              />
+              <button
+                type="button"
+                onClick={executeWipe}
+                className="rounded-lg bg-red-700 text-white font-black text-xs px-4 hover:bg-red-800 transition shadow animate-pulse"
+              >
+                Confirm Wipe
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWipeConfirm(false);
+                  setConfirmValue("");
+                }}
+                className="rounded-lg border border-slate-300 text-slate-600 font-bold text-xs px-3 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

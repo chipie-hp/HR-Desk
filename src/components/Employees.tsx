@@ -29,8 +29,12 @@ import {
   CheckCircle2,
   Info,
   ChevronRight,
-  ListFilter
+  ListFilter,
+  XCircle,
+  AlertTriangle,
+  Printer,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
 import { Employee, DatabaseState } from "../types";
 import { Modal } from "./Modals";
 import { exportToCSV, parseCSVInput, capitalizeString, getAvatarUrl } from "../utils";
@@ -39,6 +43,7 @@ interface EmployeesProps {
   state: DatabaseState;
   onAddEmployee: (employee: Omit<Employee, "id">) => void;
   onRemoveEmployee: (id: string) => void;
+  onRemoveEmployees?: (ids: string[]) => void;
   onUpdateEmployee: (id: string, updatedFields: Partial<Employee>) => void;
   onAddBatch: (branch: string, csvLines: string[][]) => void;
   targetDossierTab?: "overview" | "financials" | "attendance" | "compliance";
@@ -54,6 +59,7 @@ export default function Employees({
   state,
   onAddEmployee,
   onRemoveEmployee,
+  onRemoveEmployees,
   onUpdateEmployee,
   onAddBatch,
   targetDossierTab,
@@ -70,6 +76,17 @@ export default function Employees({
   const [deptFilter, setDeptFilter] = useState("");
   const [posFilter, setPosFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"Active" | "Terminated" | "">("Active");
+
+  // Selection state
+  const [selectedEmpIds, setSelectedEmpIds] = useState<string[]>([]);
+
+  // Contract Termination states
+  const [isTerminateOpen, setIsTerminateOpen] = useState(false);
+  const [termEmpId, setTermEmpId] = useState<string>(""); // if empty, it represents bulk termination
+  const [termReason, setTermReason] = useState("Resigned");
+  const [termDate, setTermDate] = useState(new Date().toISOString().split("T")[0]);
+  const [termNotes, setTermNotes] = useState("");
 
   // Modals state
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -112,6 +129,407 @@ export default function Employees({
   }, [externalProfileEmployeeId, state.employees]);
 
   // Form states (Add)
+
+  const handleDownloadDossierHTML = (emp: Employee) => {
+    // 1. Gather all attendance
+    const empAttendanceLogs: { date: string; status: string; inTime: string; outTime: string; note?: string }[] = [];
+    if (state.attendance) {
+      Object.keys(state.attendance).forEach(dateStr => {
+        const record = state.attendance[dateStr]?.[emp.id];
+        if (record) {
+          empAttendanceLogs.push({
+            date: dateStr,
+            status: record.status,
+            inTime: record.inTime,
+            outTime: record.outTime,
+            note: record.note,
+          });
+        }
+      });
+    }
+    // Sort descending by date
+    empAttendanceLogs.sort((a, b) => b.date.localeCompare(a.date));
+
+    // 2. Leave Requests
+    const empLeaveRequests = state.leave ? state.leave.filter(l => l.empId === emp.id) : [];
+
+    // 3. Loans
+    const empLoans = state.loans ? state.loans.filter(l => l.empId === emp.id) : [];
+
+    // 4. Disciplinary Warnings
+    const empDisciplinary = state.disciplinary ? state.disciplinary.filter(d => d.empId === emp.id) : [];
+
+    // Format individual attendance rows
+    const attendanceRowsHTML = empAttendanceLogs.length > 0 
+      ? empAttendanceLogs.map(log => `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold;">${log.date}</td>
+          <td>
+            <span class="badge badge-${log.status.toLowerCase()}">${log.status}</span>
+          </td>
+          <td style="font-family: monospace;">${log.status === "Present" ? log.inTime : "-"}</td>
+          <td style="font-family: monospace;">${log.status === "Present" ? log.outTime : "-"}</td>
+          <td style="color: #64748b; font-style: italic;">${log.note || "-"}</td>
+        </tr>
+      `).join("")
+      : '<tr><td colspan="5" style="color: #94a3b8; text-align: center; padding: 20px;">No attendance logs filed for this teammate.</td></tr>';
+
+    // Format leaves
+    const leaveRowsHTML = empLeaveRequests.length > 0
+      ? empLeaveRequests.map(l => `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold;">${l.start} to ${l.end}</td>
+          <td style="font-weight: bold; color: #0284c7;">${l.type}</td>
+          <td style="font-weight: bold; text-align: center;">${l.days} Days</td>
+          <td>
+            <span class="badge" style="background-color: ${l.status === "Approved" ? "#dcfce7" : l.status === "Pending" ? "#fef3c7" : "#fee2e2"}; color: ${l.status === "Approved" ? "#166534" : l.status === "Pending" ? "#92400e" : "#991b1b"}; font-weight: bold;">
+              ${l.status}
+            </span>
+          </td>
+        </tr>
+      `).join("")
+      : '<tr><td colspan="4" style="color: #94a3b8; text-align: center; padding: 20px;">No leave requests filed.</td></tr>';
+
+    // Format loans
+    const loansRowsHTML = empLoans.length > 0
+      ? empLoans.map(l => `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold;">MWK ${l.amount.toLocaleString()}.00</td>
+          <td style="font-family: monospace;">${l.months} Months</td>
+          <td style="font-family: monospace; font-weight: bold; color: #166534;">MWK ${l.paid.toLocaleString()}.00</td>
+          <td style="font-weight: bold; color: #166534;">ACTIVE AMORTIZATION</td>
+        </tr>
+      `).join("")
+      : '<tr><td colspan="4" style="color: #94a3b8; text-align: center; padding: 20px;">No active loans.</td></tr>';
+
+    // Format disciplinary
+    const complianceRowsHTML = empDisciplinary.length > 0
+      ? empDisciplinary.map(d => `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold;">${d.date}</td>
+          <td>
+            <span class="badge" style="background-color: #fee2e2; color: #991b1b; font-weight: bold;">
+              ${d.action}
+            </span>
+          </td>
+          <td style="font-weight: bold;">${d.desc}</td>
+          <td style="color: #64748b; font-family: monospace; font-size: 10px;">${d.id}</td>
+        </tr>
+      `).join("")
+      : '<tr><td colspan="4" style="color: #94a3b8; text-align: center; padding: 20px;">Teammate dossier is fully clean. No compliance warnings filed.</td></tr>';
+
+    const dossierHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Corporate Dossier - ${emp.first} ${emp.last}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+    
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #0f172a;
+      background-color: #f1f5f9;
+      padding: 40px 20px;
+      margin: 0;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .dossier-container {
+      max-width: 850px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      padding: 45px;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+    }
+    .action-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 25px;
+    }
+    .print-button {
+      background-color: #0f172a;
+      color: #ffffff;
+      border: none;
+      padding: 10px 20px;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      transition: background-color 0.15s ease-in-out;
+    }
+    .print-button:hover {
+      background-color: #1e293b;
+    }
+    .header-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 20px;
+      margin-bottom: 30px;
+    }
+    .title-block {
+      margin: 0;
+    }
+    .title-block h1 {
+      font-size: 18px;
+      font-weight: 900;
+      margin: 0;
+      color: #0f172a;
+      text-transform: uppercase;
+      letter-spacing: -0.01em;
+    }
+    .title-block p {
+      font-size: 12px;
+      color: #059669;
+      margin: 4px 0 0 0;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .badge-dossier {
+      background-color: #f1f5f9;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .section-title {
+      font-size: 13.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #0f172a;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 6px;
+      margin-top: 35px;
+      margin-bottom: 15px;
+      letter-spacing: 0.05em;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-cols: repeat(3, 1fr);
+      gap: 14px;
+      margin-bottom: 25px;
+    }
+    .meta-box {
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 12px 14px;
+      border-radius: 8px;
+    }
+    .meta-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #64748b;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .meta-value {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 25px;
+    }
+    th {
+      background-color: #f8fafc;
+      border-bottom: 2px solid #cbd5e1;
+      color: #475569;
+      font-weight: 700;
+      text-align: left;
+      padding: 10px 12px;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 12px;
+      color: #334155;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .badge-present { background-color: #dcfce7; color: #15803d; }
+    .badge-absent { background-color: #fee2e2; color: #b91c1c; }
+    .badge-sick { background-color: #fef3c7; color: #b45309; }
+    .badge-leave { background-color: #e0f2fe; color: #0369a1; }
+    .badge-other { background-color: #f3e8ff; color: #7e22ce; }
+    
+    @media print {
+      body {
+        background-color: #ffffff;
+        padding: 0;
+      }
+      .print-button {
+        display: none;
+      }
+      .dossier-container {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="dossier-container">
+    <div class="action-row">
+      <button class="print-button" onclick="window.print()">Print Dossier Report</button>
+    </div>
+
+    <div class="header-container">
+      <div class="title-block">
+        <h1>${emp.first} ${emp.last}</h1>
+        <p>Official Corporate Teammate Dossier & Compliance Records</p>
+      </div>
+      <div class="badge-dossier">REF ID: ${emp.id}</div>
+    </div>
+
+    <div class="section-title">Corporate Allocation Details</div>
+    <div class="meta-grid">
+      <div class="meta-box">
+        <div class="meta-label">Unique Ref ID</div>
+        <div class="meta-value" style="font-family: monospace;">${emp.id}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Assigned Department</div>
+        <div class="meta-value">${emp.dept}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Regional Location / Branch</div>
+        <div class="meta-value">${emp.branch}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Position Assignment</div>
+        <div class="meta-value">${emp.position}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Gender Classification</div>
+        <div class="meta-value">${emp.gender || "Female"}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Monthly Gross Salary</div>
+        <div class="meta-value" style="font-family: monospace; color: #166534;">MWK ${emp.salary.toLocaleString()}.00</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Standing Status</div>
+        <div class="meta-value">${emp.isTerminated ? '<span style="color: #ef4444; font-weight: 800;">TERMINATED</span>' : '<span style="color: #10b981; font-weight: 800;">ACTIVE IN SERVICE</span>'}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Contract Commencement</div>
+        <div class="meta-value" style="font-family: monospace;">${emp.cstart || "-"}</div>
+      </div>
+      <div class="meta-box">
+        <div class="meta-label">Contract Expiry</div>
+        <div class="meta-value" style="font-family: monospace;">${emp.cend || "-"}</div>
+      </div>
+    </div>
+
+    <div class="section-title">1. Attendance Registry & Absence Notes</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date Logged</th>
+          <th>Status</th>
+          <th>Check-In</th>
+          <th>Check-Out</th>
+          <th>Absence Note / Excuse details</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${attendanceRowsHTML}
+      </tbody>
+    </table>
+
+    <div class="section-title">2. Leave & Vacation Ledger Requests</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Leave Duration</th>
+          <th>Leave Classification</th>
+          <th style="text-align: center;">Days Deducted</th>
+          <th>Request Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${leaveRowsHTML}
+      </tbody>
+    </table>
+
+    <div class="section-title">3. Compliance Action warnings & Disciplinary Logbook</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Incident Date</th>
+          <th>Severity Tier</th>
+          <th>Incident Description</th>
+          <th>Standing Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${complianceRowsHTML}
+      </tbody>
+    </table>
+
+    <div class="section-title">4. Amortization Loan Repayments</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Principal Amount</th>
+          <th>Assigned Term</th>
+          <th>Aggregate Paid</th>
+          <th>Standing Approved</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${loansRowsHTML}
+      </tbody>
+    </table>
+
+    <footer style="margin-top: 60px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
+      Corporate Dossier generated certifying system index records &bull; ${new Date().toLocaleDateString()}
+    </footer>
+  </div>
+</body>
+</html>`;
+
+    const blob = new Blob([dossierHTML], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Dossier_${emp.first}_${emp.last}_Report.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    const printWindow = window.open();
+    if (printWindow) {
+      printWindow.document.write(dossierHTML);
+      printWindow.document.close();
+    }
+  };
+
   const [newFirst, setNewFirst] = useState("");
   const [newLast, setNewLast] = useState("");
   const [newGender, setNewGender] = useState("Female");
@@ -186,6 +604,36 @@ export default function Employees({
     onAddBatch(branch, rawLines);
     setBatchText("");
     setIsBatchOpen(false);
+  };
+
+  const handleTerminateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const updatePayload = {
+      isTerminated: true,
+      terminationDate: termDate,
+      terminationReason: `${termReason}${termNotes.trim() ? `: ${termNotes.trim()}` : ""}`,
+      cend: termDate
+    };
+
+    if (termEmpId) {
+      onUpdateEmployee(termEmpId, updatePayload);
+    } else {
+      const activeSelections = selectedEmpIds.filter(id => {
+        const emp = state.employees.find(e => e.id === id);
+        return emp && !emp.isTerminated;
+      });
+
+      activeSelections.forEach(id => {
+        onUpdateEmployee(id, updatePayload);
+      });
+      setSelectedEmpIds([]);
+    }
+
+    setTermEmpId("");
+    setTermReason("Resigned");
+    setTermNotes("");
+    setTermDate(new Date().toISOString().split("T")[0]);
+    setIsTerminateOpen(false);
   };
 
   const handleExport = () => {
@@ -274,7 +722,13 @@ export default function Employees({
     const matchesPos = !posFilter || emp.position === posFilter;
     const matchesBranch = !branchFilter || emp.branch === branchFilter;
     
-    return matchesSearch && matchesDept && matchesPos && matchesBranch;
+    const isTerm = !!emp.isTerminated;
+    const matchesStatus = 
+      !statusFilter || 
+      (statusFilter === "Active" && !isTerm) || 
+      (statusFilter === "Terminated" && isTerm);
+    
+    return matchesSearch && matchesDept && matchesPos && matchesBranch && matchesStatus;
   });
 
   const uniquePositions = Array.from(new Set(state.employees.map(e => e.position)));
@@ -310,13 +764,25 @@ export default function Employees({
     const employee = state.employees.find(e => e.id === empId);
     const extra = employee?.extra_leave_days || 0;
     const allowed = (state.config.leave_days || 21) + extra;
+    
+    // Auto-detect any days marked as "Other" in attendance database and count them as auto-deducted leave days
+    let otherAttendanceDays = 0;
+    if (state.attendance) {
+      Object.keys(state.attendance).forEach(dateStr => {
+        const day = state.attendance[dateStr] || {};
+        if (day[empId]?.status === "Other") {
+          otherAttendanceDays++;
+        }
+      });
+    }
+
     const taken = state.leave
       .filter(l => l.empId === empId && l.status === "Approved")
-      .reduce((sum, l) => sum + Number(l.days), 0);
+      .reduce((sum, l) => sum + Number(l.days), 0) + otherAttendanceDays;
     const pending = state.leave
       .filter(l => l.empId === empId && l.status === "Pending")
       .reduce((sum, l) => sum + Number(l.days), 0);
-    return { allowed, taken, remaining: Math.max(0, allowed - taken), pending };
+    return { allowed, taken, otherAttendanceDays, remaining: Math.max(0, allowed - taken), pending };
   };
 
   const getAttendanceBreakdown = (empId: string) => {
@@ -439,12 +905,15 @@ export default function Employees({
               onChange={(e) => setDeptFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300"
             >
-              <option value="">All Departments</option>
-              <option value="Kitchen">Kitchen</option>
-              <option value="Administration">Administration</option>
-              <option value="Operations">Operations</option>
-              <option value="Finance">Finance</option>
-              <option value="Human Resources">Human Resources</option>
+              <option value="">All Departments ({state.employees.length})</option>
+              {["Kitchen", "Administration", "Operations", "Finance", "Human Resources"].map((dept) => {
+                const count = state.employees.filter(e => e.dept === dept).length;
+                return (
+                  <option key={dept} value={dept}>
+                    {dept} ({count})
+                  </option>
+                );
+              })}
             </select>
 
             {/* Position specialized drop downs filters */}
@@ -453,10 +922,15 @@ export default function Employees({
               onChange={(e) => setPosFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-805 dark:text-slate-300"
             >
-              <option value="">All Positions</option>
-              {uniquePositions.map(p => (
-                <option key={p} value={p}>{p}</option>
-              ))}
+              <option value="">All Positions ({state.employees.length})</option>
+              {uniquePositions.map(p => {
+                const count = state.employees.filter(e => e.position === p).length;
+                return (
+                  <option key={p} value={p}>
+                    {p} ({count})
+                  </option>
+                );
+              })}
             </select>
 
             {/* Branch selective dropdown filters */}
@@ -465,10 +939,29 @@ export default function Employees({
               onChange={(e) => setBranchFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300"
             >
-              <option value="">All Operations Branches</option>
-              {state.branches.map(b => (
-                <option key={b} value={b}>{b}</option>
-              ))}
+              <option value="">All Operations Branches ({state.employees.length})</option>
+              {state.branches.map(b => {
+                const count = state.employees.filter(e => e.branch === b).length;
+                return (
+                  <option key={b} value={b}>
+                    {b} ({count})
+                  </option>
+                );
+              })}
+            </select>
+
+            {/* Employment Status selective dropdown filter */}
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value as any);
+                setSelectedEmpIds([]);
+              }}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-805 dark:text-slate-300"
+            >
+              <option value="">All Statuses ({state.employees.length})</option>
+              <option value="Active">Active ({state.employees.filter(e => !e.isTerminated).length})</option>
+              <option value="Terminated">Terminated ({state.employees.filter(e => !!e.isTerminated).length})</option>
             </select>
           </div>
         </div>
@@ -526,6 +1019,63 @@ export default function Employees({
         </div>
       </div>
 
+      {/* SECTION 2.5: BULK ACTIONS CONTROLLER */}
+      {selectedEmpIds.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl bg-slate-900 px-5 py-4 text-white shadow-lg border border-slate-800 dark:bg-black/50 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-slate-800 p-2 text-emerald-400">
+              <UserCheck2 className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-bold">{selectedEmpIds.length} Selected Teammates</p>
+              <p className="text-[11px] text-slate-400">Apply bulk operations onto the selected subset.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {state.employees.some(e => selectedEmpIds.includes(e.id) && !e.isTerminated) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTermEmpId(""); // Bulk indicators
+                  setTermReason("Resigned");
+                  setTermNotes("");
+                  setTermDate(new Date().toISOString().split("T")[0]);
+                  setIsTerminateOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-4 py-2 text-xs font-bold text-slate-950 transition"
+              >
+                <XCircle className="h-4 w-4" />
+                Bulk Terminate Contracts
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (onRemoveEmployees) {
+                  onRemoveEmployees(selectedEmpIds);
+                } else {
+                  selectedEmpIds.forEach(id => onRemoveEmployee(id));
+                }
+                setSelectedEmpIds([]);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2 text-xs font-bold text-white transition"
+            >
+              <Trash2 className="h-4 w-4" />
+              Bulk Delete Profiles
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedEmpIds([])}
+              className="rounded-xl border border-slate-705 bg-slate-800 text-slate-300 hover:bg-slate-700 px-4 py-2 text-xs font-bold transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* SECTION 3: CONDITIONAL VIEW RENDERER (TABLE OR GRID) */}
       {viewMode === "list" ? (
         <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -533,6 +1083,21 @@ export default function Employees({
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-550 dark:border-slate-800 dark:bg-slate-900/50">
+                  <th className="px-4 py-4 w-12 text-center">
+                    <input
+                      type="checkbox"
+                      checked={filtered.length > 0 && filtered.every(e => selectedEmpIds.includes(e.id))}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const allFilteredIds = filtered.map(item => item.id);
+                          setSelectedEmpIds(allFilteredIds);
+                        } else {
+                          setSelectedEmpIds([]);
+                        }
+                      }}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                    />
+                  </th>
                   <th className="px-6 py-4">Serial ID</th>
                   <th className="px-6 py-4">Avatar</th>
                   <th className="px-6 py-4">Full Name</th>
@@ -541,7 +1106,6 @@ export default function Employees({
                   <th className="px-6 py-4">Position Title</th>
                   <th className="px-6 py-4 text-right">Base Salary (MWK)</th>
                   <th className="px-6 py-4">Operational Status</th>
-                  <th className="px-6 py-4 text-center">Action Console</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm dark:divide-slate-800">
@@ -567,8 +1131,24 @@ export default function Employees({
                       <tr
                         key={emp.id}
                         onClick={() => openProfile(emp)}
-                        className="group cursor-pointer hover:bg-slate-50/50 transition duration-150 dark:hover:bg-slate-850/20"
+                        className={`group cursor-pointer hover:bg-slate-50/50 transition duration-150 dark:hover:bg-slate-850/20 ${
+                          selectedEmpIds.includes(emp.id) ? "bg-emerald-50/30 dark:bg-emerald-950/10" : ""
+                        }`}
                       >
+                        <td className="px-4 py-4.5 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedEmpIds.includes(emp.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedEmpIds(prev => [...prev, emp.id]);
+                              } else {
+                                setSelectedEmpIds(prev => prev.filter(id => id !== emp.id));
+                              }
+                            }}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                          />
+                        </td>
                         <td className="px-6 py-4.5 font-mono text-xs font-semibold text-slate-550">
                           {emp.id}
                         </td>
@@ -602,46 +1182,32 @@ export default function Employees({
                         </td>
                         <td className="px-6 py-4.5">
                           <div className="flex flex-col gap-1">
-                            <span className={`inline-flex items-center gap-1 self-start rounded-full px-2.5 py-0.5 text-xs font-bold leading-none ${
-                            isOnLeave 
-                              ? "bg-orange-100/80 text-orange-850 dark:bg-orange-950/40 dark:text-orange-350" 
-                              : "bg-emerald-100/85 text-emerald-850 dark:bg-emerald-950/40 dark:text-emerald-350"
-                            }`}>
-                              <span className={`h-1.5 w-1.5 rounded-full ${isOnLeave ? "bg-orange-600 animate-pulse" : "bg-emerald-500"}`} />
-                              {isOnLeave ? "On Leave" : "Active"}
-                            </span>
-                            
-                            {contractAlert && (
-                              <span className="text-[9px] font-extrabold text-amber-500 flex items-center gap-0.5">
-                                <AlertCircle className="h-3 w-3" /> Contract Renewal Close
+                            {emp.isTerminated ? (
+                              <span className="inline-flex items-center gap-1 self-start rounded-full bg-rose-100/80 text-rose-800 px-2.5 py-0.5 text-xs font-bold leading-none dark:bg-rose-950/40 dark:text-rose-400">
+                                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
+                                Terminated
+                              </span>
+                            ) : (
+                              <span className={`inline-flex items-center gap-1 self-start rounded-full px-2.5 py-0.5 text-xs font-bold leading-none ${
+                              isOnLeave 
+                                ? "bg-orange-100/80 text-orange-850 dark:bg-orange-950/40 dark:text-orange-350" 
+                                : "bg-emerald-100/85 text-emerald-850 dark:bg-emerald-950/40 dark:text-emerald-350"
+                              }`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${isOnLeave ? "bg-orange-600 animate-pulse" : "bg-emerald-500"}`} />
+                                {isOnLeave ? "On Leave" : "Active"}
                               </span>
                             )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4.5">
-                          <div className="flex items-center justify-center gap-1.5 opacity-40 group-hover:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openProfile(emp);
-                              }}
-                              className="rounded-lg p-1.5 text-slate-450 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                              title="View dossier records"
-                            >
-                              <Eye className="h-4.5 w-4.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onRemoveEmployee(emp.id);
-                              }}
-                              className="rounded-lg p-1.5 text-rose-450 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
-                              title="Delete profile"
-                            >
-                              <Trash2 className="h-4.5 w-4.5" />
-                            </button>
+                            
+                            {!emp.isTerminated && contractAlert && (
+                              <span className="text-[9px] font-extrabold text-amber-500 flex items-center gap-0.5">
+                                <AlertTriangle className="h-3 w-3" /> Contract Renewal Close
+                              </span>
+                            )}
+                            {emp.isTerminated && emp.terminationDate && (
+                              <span className="text-[9px] font-bold text-slate-400 dark:text-slate-550">
+                                Date: {emp.terminationDate}
+                              </span>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -675,14 +1241,36 @@ export default function Employees({
                 <div
                   key={emp.id}
                   onClick={() => openProfile(emp)}
-                  className="group relative cursor-pointer overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm hover:shadow-md transition dark:border-slate-800 dark:bg-slate-900"
+                  className={`group relative cursor-pointer overflow-hidden rounded-2xl border p-5 shadow-sm hover:shadow-md transition dark:bg-slate-900 ${
+                    selectedEmpIds.includes(emp.id) 
+                      ? "border-emerald-500 ring-2 ring-emerald-500/20" 
+                      : emp.isTerminated
+                        ? "border-rose-100 dark:border-rose-950/30 bg-rose-50/20 dark:bg-rose-950/5"
+                        : "border-slate-100 dark:border-slate-800"
+                  }`}
                 >
+                  {/* Floating checkbox */}
+                  <div className="absolute top-4 left-4" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedEmpIds.includes(emp.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedEmpIds(prev => [...prev, emp.id]);
+                        } else {
+                          setSelectedEmpIds(prev => prev.filter(id => id !== emp.id));
+                        }
+                      }}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                    />
+                  </div>
+
                   {/* Floating ID badge */}
                   <span className="absolute top-4 right-4 font-mono text-[10px] font-extrabold text-slate-400">
                     {emp.id}
                   </span>
 
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-start gap-4 pl-6">
                     <img
                       src={emp.photo || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop`}
                       alt={emp.first}
@@ -690,15 +1278,15 @@ export default function Employees({
                       className="h-14 w-14 rounded-full object-cover shadow-md ring-2 ring-slate-100 dark:ring-slate-800"
                     />
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-extrabold text-slate-900 dark:text-white group-hover:text-emerald-500 transition-colors truncate">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white group-hover:text-emerald-550 transition-colors truncate">
                         {emp.first} {emp.last}
                       </h4>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-450 truncate mt-0.5">
+                      <p className="text-xs font-semibold text-slate-550 dark:text-slate-400 truncate mt-0.5">
                         {emp.position}
                       </p>
                       
                       <div className="mt-1.5 flex flex-wrap gap-1">
-                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-550 dark:bg-slate-950 dark:text-slate-400">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-650 dark:bg-slate-950 dark:text-slate-400">
                           {emp.dept}
                         </span>
                         <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
@@ -718,10 +1306,10 @@ export default function Employees({
                     </div>
                     <div>
                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Leave / Contract</p>
-                      <div className="mt-0.5 flex items-center gap-1.5">
-                        <span className={`h-2 w-2 rounded-full ${isOnLeave ? "bg-orange-500" : "bg-emerald-500"}`} />
+                      <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span className={`h-2 w-2 rounded-full ${emp.isTerminated ? "bg-rose-500 animate-pulse" : isOnLeave ? "bg-orange-500" : "bg-emerald-500"}`} />
                         <span className="text-[11px] font-bold">
-                          {isOnLeave ? "On Leave" : "Active"}
+                          {emp.isTerminated ? "Terminated" : isOnLeave ? "On Leave" : "Active"}
                         </span>
                       </div>
                     </div>
@@ -729,8 +1317,10 @@ export default function Employees({
 
                   {/* Contract expiration flag status */}
                   <div className="mt-4 flex items-center justify-between text-[11px] bg-slate-50 rounded-xl px-3 py-2 dark:bg-slate-950/60">
-                    <span className="text-slate-450 font-semibold">Contract end:</span>
-                    {daysRemaining < 0 ? (
+                    <span className="text-slate-450 font-semibold">{emp.isTerminated ? "Terminated on:" : "Contract end:"}</span>
+                    {emp.isTerminated ? (
+                      <span className="text-rose-500 dark:text-rose-400 font-bold">{emp.terminationDate || "N/A"}</span>
+                    ) : daysRemaining < 0 ? (
                       <span className="text-rose-650 font-extrabold">Expired!</span>
                     ) : daysRemaining <= 90 ? (
                       <span className="text-amber-600 font-extrabold">{daysRemaining} days left</span>
@@ -743,7 +1333,7 @@ export default function Employees({
                   <div className="mt-3.5 pt-2.5 border-t border-slate-50/40 flex items-center justify-between dark:border-slate-800/30">
                     <div className="flex gap-2.5 text-[10px] font-bold text-slate-450 uppercase">
                       <span>📂 {complianceCount.documents.length} Files</span>
-                      <span>⚠️ {complianceCount.warnings.length} Warningss</span>
+                      <span>⚠️ {complianceCount.warnings.length} Warnings</span>
                     </div>
 
                     <div className="flex gap-1">
@@ -757,6 +1347,23 @@ export default function Employees({
                       >
                         <Eye className="h-4 w-4" />
                       </button>
+                      {!emp.isTerminated ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTermEmpId(emp.id);
+                            setTermReason("Resigned");
+                            setTermNotes("");
+                            setTermDate(new Date().toISOString().split("T")[0]);
+                            setIsTerminateOpen(true);
+                          }}
+                          className="rounded-lg p-1.5 text-amber-500 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-950/40"
+                          title="Terminate contract"
+                        >
+                          <XCircle className="h-4 w-4" />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1147,25 +1754,59 @@ export default function Employees({
                   {/* Profile Edit Toggle button */}
                   <div className="mt-6 w-full">
                     {!isEditDossierMode ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditFirst(profileEmployee.first);
-                          setEditLast(profileEmployee.last);
-                          setEditPosition(profileEmployee.position);
-                          setEditDept(profileEmployee.dept);
-                          setEditBranch(profileEmployee.branch);
-                          setEditSalary(profileEmployee.salary);
-                          setEditNational(profileEmployee.national || "");
-                          setEditGender(profileEmployee.gender || "Female");
-                          setEditCStart(profileEmployee.cstart || "");
-                          setEditCEnd(profileEmployee.cend || "");
-                          setIsEditDossierMode(true);
-                        }}
-                        className="w-full text-center rounded-xl border border-slate-200 bg-white hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:border-slate-750 dark:text-slate-300 transition"
-                      >
-                        Modify Profile Records
-                      </button>
+                      <div className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadDossierHTML(profileEmployee)}
+                          className="w-full text-center rounded-xl bg-slate-900 hover:bg-slate-850 dark:bg-slate-100 dark:hover:bg-slate-200 dark:text-slate-900 text-white py-2 text-xs font-black shadow-md transition flex items-center justify-center gap-1.5"
+                        >
+                          <Printer className="h-4 w-4" />
+                          View / Print Dossier Report
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditFirst(profileEmployee.first);
+                            setEditLast(profileEmployee.last);
+                            setEditPosition(profileEmployee.position);
+                            setEditDept(profileEmployee.dept);
+                            setEditBranch(profileEmployee.branch);
+                            setEditSalary(profileEmployee.salary);
+                            setEditNational(profileEmployee.national || "");
+                            setEditGender(profileEmployee.gender || "Female");
+                            setEditCStart(profileEmployee.cstart || "");
+                            setEditCEnd(profileEmployee.cend || "");
+                            setIsEditDossierMode(true);
+                          }}
+                          className="w-full text-center rounded-xl border border-slate-200 bg-white hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:border-slate-755 dark:text-slate-300 transition"
+                        >
+                          Modify Profile Records
+                        </button>
+                        
+                        {!profileEmployee.isTerminated ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTermEmpId(profileEmployee.id);
+                              setTermReason("Resigned");
+                              setTermNotes("");
+                              setTermDate(new Date().toISOString().split("T")[0]);
+                              setIsTerminateOpen(true);
+                            }}
+                            className="w-full text-center rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/20 dark:text-rose-400 py-2 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                          >
+                            <XCircle className="h-4 w-4" />
+                            Terminate Contract
+                          </button>
+                        ) : (
+                          <div className="w-full bg-rose-50/50 border border-rose-100/50 text-rose-700 dark:bg-rose-955/10 dark:border-rose-900/30 dark:text-rose-400 p-2.5 rounded-xl text-left text-xs font-medium">
+                            <p className="font-bold uppercase text-[9px] tracking-wider text-rose-500">Employment Terminated</p>
+                            <p className="mt-0.5 font-bold">{profileEmployee.terminationReason || "N/A"}</p>
+                            <p className="text-[10px] mt-0.5 opacity-80">Effective Date: {profileEmployee.terminationDate || "N/A"}</p>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div className="flex gap-2">
                         <button
@@ -1710,6 +2351,125 @@ export default function Employees({
               </div>
 
             </div>
+          );
+        })()}
+      </Modal>
+
+      {/* MODAL 4: CONTRACT TERMINATION / DISMISSAL */}
+      <Modal
+        isOpen={isTerminateOpen}
+        onClose={() => setIsTerminateOpen(false)}
+        title={termEmpId ? "Contract Termination" : "Bulk Contract Termination"}
+        subtitle={
+          termEmpId 
+            ? `Legally terminate the employment contract for employee ID: ${termEmpId}.`
+            : `Bulk terminate employment contracts for ${selectedEmpIds.length} selected personnel.`
+        }
+        maxWidthClass="max-w-md"
+      >
+        {(() => {
+          const targetEmp = termEmpId ? state.employees.find(e => e.id === termEmpId) : null;
+          return (
+            <form onSubmit={handleTerminateSubmit} className="space-y-4">
+              {termEmpId && targetEmp && (
+                <div className="flex items-center gap-3 bg-rose-50/50 p-3 rounded-xl border border-rose-100/50 dark:bg-rose-950/20 dark:border-rose-900/30">
+                  <img
+                    src={targetEmp.photo || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop`}
+                    alt={targetEmp.first}
+                    referrerPolicy="no-referrer"
+                    className="h-10 w-10 rounded-full object-cover"
+                  />
+                  <div>
+                    <h5 className="font-bold text-slate-800 dark:text-white">
+                      {targetEmp.first} {targetEmp.last}
+                    </h5>
+                    <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold">{targetEmp.position} • {targetEmp.dept}</p>
+                  </div>
+                </div>
+              )}
+
+              {!termEmpId && (
+                <div className="bg-amber-50/40 p-3 rounded-xl border border-amber-100/50 dark:bg-amber-955/10 dark:border-amber-900/40">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Applying bulk contract closure onto:
+                  </p>
+                  <div className="mt-1.5 max-h-24 overflow-y-auto flex flex-wrap gap-1 text-[11px] font-bold">
+                    {selectedEmpIds.map(id => {
+                      const emp = state.employees.find(e => e.id === id);
+                      if (!emp) return null;
+                      return (
+                        <span key={id} className="rounded bg-white border border-slate-200 px-1.5 py-0.5 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100">
+                          {emp.first} {emp.last} (ID: {id})
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wide dark:text-slate-350 mb-1">
+                    Effective Termination Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={termDate}
+                    onChange={(e) => setTermDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-rose-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wide dark:text-slate-350 mb-1">
+                    Administrative Close Reason
+                  </label>
+                  <select
+                    value={termReason}
+                    onChange={(e) => setTermReason(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-rose-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+                  >
+                    <option value="Resigned">Voluntary Resignation</option>
+                    <option value="Discharged">Administrative Discharge / Exit</option>
+                    <option value="Non-performance">Non-performance Clause</option>
+                    <option value="Redundancy">Corporate Redundancy / Layoff</option>
+                    <option value="Retirement">Retirement</option>
+                    <option value="Mutual Consent">Mutual Consent Contract Close</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wide dark:text-slate-350 mb-1">
+                    Transition Notes / Documentation (Optional)
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Enter secondary details, compensation agreements, handover states..."
+                    value={termNotes}
+                    onChange={(e) => setTermNotes(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs focus:border-rose-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100 placeholder:text-slate-450"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 border-t border-slate-50 pt-3 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsTerminateOpen(false)}
+                  className="w-1/2 rounded-xl border border-slate-200 px-4 py-2 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 text-xs font-bold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="w-1/2 rounded-xl bg-rose-600 transition hover:bg-rose-700 py-2 text-xs font-bold text-white shadow-md flex items-center justify-center gap-1.5"
+                >
+                  <XCircle className="h-4 w-4" />
+                  Terminate Contract
+                </button>
+              </div>
+            </form>
           );
         })()}
       </Modal>

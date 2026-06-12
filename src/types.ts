@@ -18,12 +18,18 @@ export interface Employee {
   photo: string;
   extra_leave_days?: number;
   converted_ot_hours?: number;
+  isTerminated?: boolean;
+  terminationDate?: string;
+  terminationReason?: string;
 }
 
 export interface AttendanceRecord {
-  status: "Present" | "Absent" | "Sick" | "Leave";
+  status: "Present" | "Absent" | "Sick" | "Leave" | "Other";
   inTime: string;
   outTime: string;
+  sickSelectedAt?: string; // ISO string when first marked Sick
+  autoDeducted?: boolean; // Set to true if converted to Absent due to lack of medical proof
+  note?: string; // Custom notes for other types
 }
 
 export interface DayAttendance {

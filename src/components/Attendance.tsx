@@ -21,23 +21,27 @@ import {
   FileSpreadsheet,
   Gauge
 } from "lucide-react";
-import { DatabaseState, AttendanceRecord, Employee, DeductionApproval } from "../types";
+import { DatabaseState, AttendanceRecord, AttendanceDatabase, Employee, DeductionApproval, DocumentRecord } from "../types";
 import { calculateOvertimeHours, exportToCSV } from "../utils";
 import { ConfirmModal } from "./Modals";
 
 interface AttendanceProps {
   state: DatabaseState;
   onSaveAttendance: (date: string, dayAttendance: { [empId: string]: AttendanceRecord }) => void;
+  onUpdateFullAttendance?: (updatedAttendance: AttendanceDatabase) => void;
   onApplyPenalty: (penalty: Omit<DeductionApproval, "id">) => void;
   onSelectEmployee?: (empId: string, dossierTab?: "overview" | "financials" | "attendance" | "compliance") => void;
+  onAddDocument?: (doc: Omit<DocumentRecord, "id">) => void;
   showToast: (msg: string, type: "success" | "error" | "info") => void;
 }
 
 export default function Attendance({
   state,
   onSaveAttendance,
+  onUpdateFullAttendance,
   onApplyPenalty,
   onSelectEmployee,
+  onAddDocument,
   showToast,
 }: AttendanceProps) {
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
@@ -106,6 +110,8 @@ export default function Attendance({
         // Preset check times elegantly if absent/sick/leave
         inTime: status === "Absent" ? "00:00" : status === "Sick" || status === "Leave" ? "00:00" : prev[empId]?.inTime || "08:00",
         outTime: status === "Absent" ? "00:00" : status === "Sick" || status === "Leave" ? "00:00" : prev[empId]?.outTime || "17:00",
+        sickSelectedAt: status === "Sick" ? new Date().toISOString() : prev[empId]?.sickSelectedAt,
+        autoDeducted: status === "Sick" ? false : prev[empId]?.autoDeducted
       }
     }));
   };
@@ -116,6 +122,16 @@ export default function Attendance({
       [empId]: {
         ...prev[empId],
         [field]: value,
+      }
+    }));
+  };
+
+  const handleNoteChange = (empId: string, note: string) => {
+    setLocalAttendance(prev => ({
+      ...prev,
+      [empId]: {
+        ...prev[empId],
+        note
       }
     }));
   };
@@ -230,6 +246,203 @@ export default function Attendance({
       setPendingPenalties([]);
       setCurrentPenaltyIndex(-1);
     }
+  };
+
+  // Automated medical proof sweep for sick leaves
+  const runAutoDeductionSweep = () => {
+    if (!onUpdateFullAttendance) return;
+    let dbUpdated = false;
+    const fullAttendanceCopy = JSON.parse(JSON.stringify(state.attendance));
+
+    Object.keys(fullAttendanceCopy).forEach(dateStr => {
+      const day = fullAttendanceCopy[dateStr] || {};
+      let dayUpdated = false;
+
+      Object.keys(day).forEach(empId => {
+        const record = day[empId];
+        if (record && record.status === "Sick" && !record.autoDeducted) {
+          // Check proof
+          const hasProof = state.documents.some(doc => 
+            doc.empId === empId && 
+            (doc.type === "Health Passport Proof" || 
+             doc.type === "Medical Health Assessment Form" || 
+             doc.name.toLowerCase().includes("health passport") ||
+             doc.name.toLowerCase().includes("medical proof"))
+          );
+
+          if (!hasProof) {
+            let isOverdue = false;
+            // Mode 1: Real-time 48h check based on sickSelectedAt
+            if (record.sickSelectedAt) {
+              const elapsedMs = Date.now() - new Date(record.sickSelectedAt).getTime();
+              isOverdue = elapsedMs >= 48 * 60 * 60 * 1000;
+            } else {
+              // Mode 2: Calendar date check: if selected view date is >= 2 days in the future relative to the attendance record date
+              const recordTime = new Date(dateStr).getTime();
+              const currentTime = new Date(date).getTime();
+              const diffMs = currentTime - recordTime;
+              isOverdue = diffMs >= 48 * 60 * 60 * 1000;
+            }
+
+            if (isOverdue) {
+              day[empId] = {
+                ...record,
+                status: "Absent",
+                autoDeducted: true
+              };
+              dayUpdated = true;
+              dbUpdated = true;
+
+              const emp = state.employees.find(e => e.id === empId);
+              const name = emp ? `${emp.first} ${emp.last}` : empId;
+              showToast(`no medical proof was presented for ${name} - auto-deducted as absent.`, "error");
+            }
+          }
+        }
+      });
+
+      if (dayUpdated) {
+        fullAttendanceCopy[dateStr] = day;
+      }
+    });
+
+    if (dbUpdated) {
+      onUpdateFullAttendance(fullAttendanceCopy);
+    }
+  };
+
+  // Run the sweep automatically when component parameters or records change
+  useEffect(() => {
+    runAutoDeductionSweep();
+  }, [date, state.documents, state.attendance]);
+
+  const getSickRecordsPendingOrOverdue = () => {
+    const list: {
+      dateStr: string;
+      emp: Employee;
+      record: AttendanceRecord;
+      isOverdue: boolean;
+      hoursPassed: number;
+    }[] = [];
+
+    Object.keys(state.attendance).forEach(dateStr => {
+      const day = state.attendance[dateStr] || {};
+      Object.keys(day).forEach(empId => {
+        const record = day[empId];
+        if (record && record.status === "Sick") {
+          const emp = state.employees.find(e => e.id === empId);
+          if (emp) {
+            const hasProof = state.documents.some(doc => 
+              doc.empId === empId && 
+              (doc.type === "Health Passport Proof" || 
+               doc.type === "Medical Health Assessment Form" || 
+               doc.name.toLowerCase().includes("health passport") ||
+               doc.name.toLowerCase().includes("medical proof"))
+            );
+
+            if (!hasProof && !record.autoDeducted) {
+              let hoursPassed = 0;
+              if (record.sickSelectedAt) {
+                hoursPassed = (Date.now() - new Date(record.sickSelectedAt).getTime()) / (1000 * 60 * 60);
+              } else {
+                const diffTime = Math.abs(new Date(date).getTime() - new Date(dateStr).getTime());
+                hoursPassed = diffTime / (1000 * 60 * 60);
+              }
+
+              const isOverdue = hoursPassed >= 48;
+
+              list.push({
+                dateStr,
+                emp,
+                record,
+                isOverdue,
+                hoursPassed
+              });
+            }
+          }
+        }
+      });
+    });
+
+    return list;
+  };
+
+  const pendingSickAudits = getSickRecordsPendingOrOverdue();
+
+  // Simulation handler to instantly make a record overdue
+  const handleSimulateLapse = (dateStr: string, empId: string) => {
+    if (!onUpdateFullAttendance) return;
+    const fullAttendanceCopy = JSON.parse(JSON.stringify(state.attendance));
+    if (fullAttendanceCopy[dateStr]?.[empId]) {
+      // Set to 49 hours ago so it behaves exactly as if 48+ hours have lapsed 
+      const ancientTime = new Date(Date.now() - 49 * 60 * 60 * 1000).toISOString();
+      fullAttendanceCopy[dateStr][empId].sickSelectedAt = ancientTime;
+      onUpdateFullAttendance(fullAttendanceCopy);
+      showToast(`Simulated 48-hour time lapse for ${state.employees.find(e => e.id === empId)?.first || empId}. Run sweep or scroll to view!`, "info");
+    }
+  };
+
+  const handleApproveMedicalReport = (empId: string) => {
+    if (!onAddDocument) {
+      showToast("Document archiving function is currently unavailable.", "error");
+      return;
+    }
+    const emp = state.employees.find(e => e.id === empId);
+    const empName = emp ? `${emp.first} ${emp.last}` : empId;
+    
+    onAddDocument({
+      empId,
+      type: "Health Passport Proof",
+      name: `Approved Medical Report - Approved on ${new Date().toISOString().split("T")[0]}`
+    });
+    
+    showToast(`Approved medical report and archived details for ${empName}!`, "success");
+  };
+
+  const getMedicalProofStatus = (empId: string, recordDate: string, record: AttendanceRecord) => {
+    if (record.status !== "Sick") return null;
+
+    const hasProof = state.documents.some(doc => 
+      doc.empId === empId && 
+      (doc.type === "Health Passport Proof" || 
+       doc.type === "Medical Health Assessment Form" || 
+       doc.name.toLowerCase().includes("health passport") ||
+       doc.name.toLowerCase().includes("medical proof"))
+    );
+
+    if (hasProof) {
+      return { status: "Verified", label: "Medical Proof Verified", color: "text-emerald-750 bg-emerald-50 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-950/10" };
+    }
+
+    let isOverdue = false;
+    let remainingText = "";
+
+    if (record.sickSelectedAt) {
+      const elapsedMs = Date.now() - new Date(record.sickSelectedAt).getTime();
+      const remainingMs = (48 * 60 * 60 * 1000) - elapsedMs;
+      if (remainingMs <= 0) {
+        isOverdue = true;
+      } else {
+        const hoursLeft = Math.ceil(remainingMs / (1000 * 60 * 60));
+        remainingText = `${hoursLeft}h left`;
+      }
+    } else {
+      // Calendar check
+      const recordTime = new Date(recordDate).getTime();
+      const currentTime = new Date(date).getTime();
+      const diffMs = currentTime - recordTime;
+      if (diffMs >= 48 * 60 * 60 * 1000) {
+        isOverdue = true;
+      } else {
+        remainingText = "48h clock active";
+      }
+    }
+
+    if (isOverdue) {
+      return { status: "Overdue", label: "No proof - Overdue", color: "text-rose-600 bg-rose-50 border-rose-100 dark:bg-rose-950/20 dark:text-rose-450 dark:border-rose-950/10" };
+    }
+
+    return { status: "Pending", label: `Awaiting Proof (${remainingText})`, color: "text-amber-600 bg-amber-50 border-amber-100 dark:bg-amber-950/20 dark:text-amber-455 dark:border-amber-950/10" };
   };
 
   // Matches text search + branch + department filters
@@ -404,10 +617,13 @@ export default function Attendance({
             onChange={(e) => setBranchFilter(e.target.value)}
             className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200 focus:outline-none focus:border-emerald-500"
           >
-            <option value="">All Branches</option>
-            {state.branches.map(b => (
-              <option key={b} value={b}>{b}</option>
-            ))}
+            <option value="">All Branches ({state.employees.length})</option>
+            {state.branches.map(b => {
+              const count = state.employees.filter(e => e.branch === b).length;
+              return (
+                <option key={b} value={b}>{b} ({count})</option>
+              );
+            })}
           </select>
 
           {/* Dept filter */}
@@ -416,12 +632,13 @@ export default function Attendance({
             onChange={(e) => setDeptFilter(e.target.value)}
             className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200 focus:outline-none focus:border-emerald-500"
           >
-            <option value="">All Departments</option>
-            <option value="Kitchen">Kitchen</option>
-            <option value="Administration">Administration</option>
-            <option value="Operations">Operations</option>
-            <option value="Finance">Finance</option>
-            <option value="Human Resources">Human Resources</option>
+            <option value="">All Departments ({state.employees.length})</option>
+            {["Kitchen", "Administration", "Operations", "Finance", "Human Resources"].map((dept) => {
+              const count = state.employees.filter(e => e.dept === dept).length;
+              return (
+                <option key={dept} value={dept}>{dept} ({count})</option>
+              );
+            })}
           </select>
         </div>
 
@@ -450,6 +667,85 @@ export default function Attendance({
           </button>
         </div>
       </div>
+
+      {/* MEDICAL PROOF VERIFICATION ALERT BOX */}
+      {pendingSickAudits.length > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50/40 p-5 dark:border-red-950/25 dark:bg-rose-950/10 space-y-3.5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-650 dark:bg-red-950/40 dark:text-red-400">
+              <AlertTriangle className="h-5 w-5 animate-pulse" />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-bold text-red-800 dark:text-red-400">
+                Medical Compliance Guard: Health Passport Proof Outstanding
+              </h4>
+              <p className="text-xs text-red-600/90 dark:text-red-350/90 mt-0.5">
+                The employees listed below have been marked as <strong>Sick</strong> on their attendance record. They are granted a <strong>48-hour Grace Period</strong> to submit a Health Passport as medical proof. If no proof is submitted, contract terms mandate automatic deduction as <strong>Absent</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {pendingSickAudits.map(({ dateStr, emp, record, isOverdue, hoursPassed }) => {
+              const hoursLeft = Math.max(0, 48 - hoursPassed);
+              const timerLabel = isOverdue 
+                ? "OVERDUE (Converts to Absent)" 
+                : `${Math.floor(hoursLeft)} hours remaining`;
+
+              return (
+                <div 
+                  key={`${dateStr}-${emp.id}`}
+                  className={`rounded-xl border p-3.5 flex flex-col justify-between ${
+                    isOverdue 
+                      ? "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-950/40" 
+                      : "bg-white border-slate-150 dark:bg-slate-900 dark:border-slate-800"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <img src={emp.photo} alt={emp.first} className="h-8 w-8 rounded-full object-cover" />
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight">
+                        {emp.first} {emp.last}
+                      </h5>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-widest block">
+                        Record Date: {dateStr}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 border-t border-slate-100 dark:border-slate-800/60 pt-2.5">
+                    <div className="flex items-center justify-between text-[10px] font-bold">
+                      <span className="text-slate-500">Grace Status:</span>
+                      <span className={isOverdue ? "text-red-600 uppercase font-black" : "text-amber-600 font-bold"}>
+                        {timerLabel}
+                      </span>
+                    </div>
+
+                    <div className="flex gap-1.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleApproveMedicalReport(emp.id)}
+                        className="flex-1 text-[10px] font-black rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 py-1.5 transition text-center px-1"
+                        title="Tick/approve medical report as presented"
+                      >
+                        ✓ Approve Report
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSimulateLapse(dateStr, emp.id)}
+                        className="text-[10px] font-black rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-750 p-1.5 transition text-center shrink-0"
+                        title="Forward time to test auto-deduction instantly"
+                      >
+                        ⚡ Simulate 48h
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 3. MAIN ATTENDANCE REGISTER DATA TABLE */}
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -489,6 +785,7 @@ export default function Attendance({
                     Absent: "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/30 dark:bg-rose-950/20 dark:text-rose-400",
                     Sick: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/30 dark:bg-amber-950/20 dark:text-amber-400",
                     Leave: "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/30 dark:bg-sky-950/20 dark:text-sky-400",
+                    Other: "border-purple-200 bg-purple-50 text-purple-800 dark:border-purple-900/30 dark:bg-purple-950/20 dark:text-purple-400",
                   };
 
                   const statusLeftBorder = {
@@ -496,6 +793,7 @@ export default function Attendance({
                     Absent: "border-l-4 border-l-rose-500",
                     Sick: "border-l-4 border-l-amber-500",
                     Leave: "border-l-4 border-l-sky-500",
+                    Other: "border-l-4 border-l-purple-500",
                   };
 
                   return (
@@ -527,16 +825,59 @@ export default function Attendance({
 
                       {/* Dropdown status classification toggle */}
                       <td className="px-6 py-4">
-                        <select
-                          value={record.status}
-                          onChange={(e) => handleStatusChange(emp.id, e.target.value as AttendanceRecord["status"])}
-                          className={`rounded-xl border px-3 py-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 transition cursor-pointer ${badgeColors[record.status]}`}
-                        >
-                          <option value="Present">Present</option>
-                          <option value="Absent">Absent</option>
-                          <option value="Sick">Sick Leave</option>
-                          <option value="Leave">On Leave</option>
-                        </select>
+                        <div className="flex flex-col gap-1.5 max-w-[155px]">
+                          <select
+                            value={record.status}
+                            onChange={(e) => handleStatusChange(emp.id, e.target.value as AttendanceRecord["status"])}
+                            className={`rounded-xl border px-3 py-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 transition cursor-pointer ${badgeColors[record.status]}`}
+                          >
+                            <option value="Present">Present</option>
+                            <option value="Absent">Absent</option>
+                            <option value="Sick">Sick Leave</option>
+                            <option value="Leave">On Leave</option>
+                            <option value="Other">Other</option>
+                          </select>
+                          
+                          {record.status === "Sick" && (() => {
+                            const proofStatus = getMedicalProofStatus(emp.id, date, record);
+                            if (proofStatus) {
+                              const isUnverified = proofStatus.status !== "Verified";
+                              return (
+                                <div className="flex flex-col gap-1 inline-flex">
+                                  <span className={`inline-flex items-center justify-center rounded-lg px-2 py-0.5 border text-[9px] font-black leading-none uppercase ${proofStatus.color}`}>
+                                    {proofStatus.label}
+                                  </span>
+                                  {isUnverified && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApproveMedicalReport(emp.id)}
+                                      className="text-left text-[9px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-bold underline transition pl-1"
+                                    >
+                                      ✓ Approve Report
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+
+                          {record.status === "Other" && (
+                            <input
+                              type="text"
+                              placeholder="Reason / Notes..."
+                              value={record.note || ""}
+                              onChange={(e) => handleNoteChange(emp.id, e.target.value)}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 mt-1 focus:border-purple-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+                            />
+                          )}
+                          
+                          {record.status === "Absent" && record.autoDeducted && (
+                            <span className="inline-flex items-center justify-center rounded-lg bg-red-100 border border-red-200 px-2 py-0.5 text-[9.5px] font-black text-red-700 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-950/20 uppercase leading-none text-center">
+                              No Med Proof Presented
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Check-In Picker inside column with Late arrival detection label text */}

@@ -166,10 +166,14 @@ export default function Payroll({
     addTableRow("Basic monthly salary base", `MWK ${p.base.toLocaleString()}.00`, "-");
 
     // 2. PAYE Tax
-    addTableRow("PAYE Income progressive tax", "-", `MWK ${p.paye.toLocaleString()}.00`);
+    if (state.config.paye > 0) {
+      addTableRow("PAYE Income progressive tax", "-", `MWK ${p.paye.toLocaleString()}.00`);
+    }
 
     // 3. National pension
-    addTableRow("National pension statutory contribution", "-", `MWK ${p.pension.toLocaleString()}.00`);
+    if (state.config.pension > 0) {
+      addTableRow("National pension statutory contribution", "-", `MWK ${p.pension.toLocaleString()}.00`);
+    }
 
     // 4. Absenteeism
     if (p.absentDeduction > 0) {
@@ -262,6 +266,22 @@ export default function Payroll({
         <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">Absenteeism Deduction (${p.absences} Days absent)</td>
         <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8; font-size: 13px;">-</td>
         <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.absentDeduction.toLocaleString()}.00</td>
+      </tr>
+    ` : "";
+
+    const payeRow = state.config.paye > 0 ? `
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">PAYE Income progressive tax</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.paye.toLocaleString()}.00</td>
+      </tr>
+    ` : "";
+
+    const pensionRow = state.config.pension > 0 ? `
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">National pension statutory contribution</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
+        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.pension.toLocaleString()}.00</td>
       </tr>
     ` : "";
 
@@ -449,16 +469,8 @@ export default function Payroll({
           <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.base.toLocaleString()}.00</td>
           <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
         </tr>
-        <tr>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">PAYE Income progressive tax</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.paye.toLocaleString()}.00</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">National pension statutory contribution</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.pension.toLocaleString()}.00</td>
-        </tr>
+        ${payeRow}
+        ${pensionRow}
         ${absentRow}
         ${advanceRow}
         ${loanRow}
