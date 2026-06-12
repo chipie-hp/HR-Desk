@@ -92,7 +92,6 @@ export default function Employees({
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
   const [posFilter, setPosFilter] = useState("");
-  const [branchFilter, setBranchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"Active" | "Terminated" | "">("Active");
 
   // Selection state
@@ -742,7 +741,6 @@ export default function Employees({
       emp.id.toLowerCase().includes(q);
     const matchesDept = !deptFilter || emp.dept === deptFilter;
     const matchesPos = !posFilter || emp.position === posFilter;
-    const matchesBranch = !branchFilter || emp.branch === branchFilter;
     
     const isTerm = !!emp.isTerminated;
     const matchesStatus = 
@@ -750,7 +748,7 @@ export default function Employees({
       (statusFilter === "Active" && !isTerm) || 
       (statusFilter === "Terminated" && isTerm);
     
-    return matchesSearch && matchesDept && matchesPos && matchesBranch && matchesStatus;
+    return matchesSearch && matchesDept && matchesPos && matchesStatus;
   });
 
   const uniquePositions = Array.from(new Set(state.employees.map(e => e.position)));
@@ -950,23 +948,6 @@ export default function Employees({
                 return (
                   <option key={p} value={p}>
                     {p} ({count})
-                  </option>
-                );
-              })}
-            </select>
-
-            {/* Branch selective dropdown filters */}
-            <select
-              value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300"
-            >
-              <option value="">All Operations Branches ({state.employees.length})</option>
-              {state.branches.map(b => {
-                const count = state.employees.filter(e => e.branch === b).length;
-                return (
-                  <option key={b} value={b}>
-                    {b} ({count})
                   </option>
                 );
               })}

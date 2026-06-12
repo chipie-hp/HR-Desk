@@ -45,7 +45,6 @@ export default function Attendance({
   showToast,
 }: AttendanceProps) {
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [branchFilter, setBranchFilter] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -447,14 +446,13 @@ export default function Attendance({
 
   // Matches text search + branch + department filters
   const filteredEmployees = state.employees.filter(emp => {
-    const matchesBranch = !branchFilter || emp.branch === branchFilter;
     const matchesDept = !deptFilter || emp.dept === deptFilter;
     
     const fullName = `${emp.first} ${emp.last}`.toLowerCase();
     const query = searchQuery.toLowerCase();
     const matchesSearch = !searchQuery.trim() || fullName.includes(query) || emp.id.toLowerCase().includes(query);
 
-    return matchesBranch && matchesDept && matchesSearch;
+    return matchesDept && matchesSearch;
   });
 
   // Calculate live stats based on matching local attendance map edits
@@ -610,21 +608,6 @@ export default function Attendance({
               className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm font-medium text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
             />
           </div>
-
-          {/* Branch filter */}
-          <select
-            value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200 focus:outline-none focus:border-emerald-500"
-          >
-            <option value="">All Branches ({state.employees.length})</option>
-            {state.branches.map(b => {
-              const count = state.employees.filter(e => e.branch === b).length;
-              return (
-                <option key={b} value={b}>{b} ({count})</option>
-              );
-            })}
-          </select>
 
           {/* Dept filter */}
           <select

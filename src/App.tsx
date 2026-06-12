@@ -23,6 +23,7 @@ import {
   Lock,
   Menu,
   X,
+  Clock,
   UserCheck2,
   FileCheck2,
   LockKeyhole,
@@ -43,7 +44,8 @@ import {
   DisciplinaryRecord, 
   DocumentRecord, 
   PayrollRecord, 
-  SystemConfig 
+  SystemConfig,
+  RosterEntry
 } from "./types";
 
 import { loadDatabase, saveDatabase, INITIAL_STATE, getAvatarUrl } from "./utils";
@@ -53,6 +55,7 @@ import { ToastContainer, ToastItem, ConfirmModal } from "./components/Modals";
 import Dashboard from "./components/Dashboard";
 import Employees from "./components/Employees";
 import Attendance from "./components/Attendance";
+import Roster from "./components/Roster";
 import Leave from "./components/Leave";
 import Payroll from "./components/Payroll";
 import Loans from "./components/Loans";
@@ -449,6 +452,35 @@ export default function App() {
     addLogEvent("Backup Restore Engine", "System initialized database to restored file reference successfully.");
   };
 
+  // 19. SHIFT ROSTER PLANS SAVER
+  const handleSaveRoster = (newRoster: RosterEntry) => {
+    updateStateAndPersist(prev => {
+      const existing = prev.roster || [];
+      const updated = existing.some(r => r.id === newRoster.id)
+        ? existing.map(r => r.id === newRoster.id ? newRoster : r)
+        : [...existing, newRoster];
+      
+      addLogEvent("Shift Roster Builder", `Saved shift roster "${newRoster.name}" for ${newRoster.branch}.`);
+      return {
+        ...prev,
+        roster: updated
+      };
+    });
+  };
+
+  // 20. ROSTER PLAN DELETE TRIGGER 
+  const handleDeleteRoster = (rosterId: string) => {
+    updateStateAndPersist(prev => {
+      const existing = prev.roster || [];
+      const updated = existing.filter(r => r.id !== rosterId);
+      addLogEvent("Shift Roster Builder", `Removed shift roster id ${rosterId}.`);
+      return {
+        ...prev,
+        roster: updated
+      };
+    });
+  };
+
   // Quick select teammate details by clicking dashboard rows direct!
   const handleSelectEmployee = (empId: string, dossierTab?: "overview" | "financials" | "attendance" | "compliance") => {
     const matched = dbState.employees.find(e => e.id === empId);
@@ -529,6 +561,7 @@ export default function App() {
       disciplinary: dbState.disciplinary.filter(d => employeeIdsSet.has(d.empId)),
       documents: dbState.documents.filter(d => employeeIdsSet.has(d.empId)),
       deductionApprovals: dbState.deductionApprovals.filter(d => employeeIdsSet.has(d.empId)),
+      roster: (dbState.roster || []).filter(r => r.branch === selectedBranch),
     };
   };
 
@@ -572,6 +605,16 @@ export default function App() {
             onSelectEmployee={handleSelectEmployee}
             onAddDocument={handleArchiveDocument}
             showToast={showToast}
+          />
+        );
+      case "roster":
+        return (
+          <Roster
+            state={filteredState}
+            onSaveRoster={handleSaveRoster}
+            onDeleteRoster={handleDeleteRoster}
+            showToast={showToast}
+            selectedBranch={selectedBranch}
           />
         );
       case "leave":
@@ -659,6 +702,7 @@ export default function App() {
     { target: "dashboard", label: "Dashboard", Icon: PieChart },
     { target: "employees", label: "Employees", Icon: Users },
     { target: "attendance", label: "Attendance", Icon: Calendar },
+    { target: "roster", label: "Duty Roster Builder", Icon: Clock },
     { target: "leave", label: "Leave Requests", Icon: PlaneTakeoff },
     { target: "payroll", label: "Calculations Sheets", Icon: Calculator },
     { target: "loans", label: "Active Loans", Icon: Coins },
@@ -972,11 +1016,12 @@ export default function App() {
         </main>
 
         {/* BOTTOM HEADER BAR: MOBILE OPTIMIZED LAYOUT */}
-        <nav className="fixed bottom-0 inset-x-0 h-16 bg-slate-900 border-t border-slate-800 text-slate-400 z-30 flex md:hidden dark:bg-slate-950 dark:border-slate-900">
+        <nav className="fixed bottom-0 inset-x-0 h-16 bg-slate-905 border-t border-slate-800 text-slate-400 z-30 flex md:hidden dark:bg-slate-955 dark:border-slate-900">
           {[
             { tag: "dashboard", label: "Dashboard", Icon: PieChart },
             { tag: "employees", label: "Employees", Icon: Users },
             { tag: "attendance", label: "Attendance", Icon: Calendar },
+            { tag: "roster", label: "Roster", Icon: Clock },
             { tag: "payroll", label: "Payroll", Icon: Calculator },
             { tag: "settings", label: "Settings", Icon: Settings2 },
           ].map(b => {

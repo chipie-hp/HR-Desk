@@ -301,44 +301,6 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Operational Logs & Logs Grid */}
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="border-b border-slate-100 px-6 py-4 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2.5">
-            <Terminal className="h-5 w-5 text-slate-400" />
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-              Recent Operational Logs
-            </h3>
-          </div>
-          <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 uppercase">
-            Auto-auditing active
-          </span>
-        </div>
-        <div className="max-h-64 overflow-y-auto">
-          {logs.length === 0 ? (
-            <div className="py-12 text-center text-slate-400 dark:text-slate-500">
-              No administrative system activities recorded yet.
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {logs.map((log, idx) => (
-                <div key={idx} className="flex px-6 py-3.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 text-xs items-center gap-4">
-                  <span className="font-mono text-slate-400 shrink-0 select-none">
-                    {log.time}
-                  </span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5 font-bold uppercase tracking-wider text-[9px] text-slate-600 dark:bg-slate-800 dark:text-slate-300 shrink-0">
-                    {log.category}
-                  </span>
-                  <span className="text-slate-600 dark:text-slate-300 break-words flex-1">
-                    {log.details}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Custom Detail modal of clicking KPIs */}
       <Modal
         isOpen={isDetailOpen}

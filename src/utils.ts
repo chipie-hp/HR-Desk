@@ -234,6 +234,7 @@ export const INITIAL_STATE: DatabaseState = {
   branches: ["Main Branch", "Lilongwe Branch", "Blantyre Branch"],
   config: DEFAULT_CONFIG,
   deductionApprovals: [],
+  roster: [],
 };
 
 const STORAGE_KEY = "CCASH_HR_DB_REACT";

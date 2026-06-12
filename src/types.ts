@@ -111,6 +111,20 @@ export interface SystemConfig {
   leave_days: number; // e.g. 21
 }
 
+export interface RosterAssignment {
+  empId: string;
+  shifts: { [dateStr: string]: "Day" | "Night" | "Off" };
+}
+
+export interface RosterEntry {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  branch: string;
+  assignments: RosterAssignment[];
+}
+
 export interface DatabaseState {
   employees: Employee[];
   attendance: AttendanceDatabase;
@@ -123,4 +137,5 @@ export interface DatabaseState {
   branches: string[];
   config: SystemConfig;
   deductionApprovals: DeductionApproval[];
+  roster?: RosterEntry[];
 }
