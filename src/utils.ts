@@ -349,7 +349,7 @@ export function calculateWorkingHours(status: string, inTime: string, outTime: s
   return parseFloat(Math.max(0, totalHours).toFixed(1));
 }
 
-export function calculateOvertimeHours(outTime: string, inTime: string = "08:00", status: string = "Present"): number {
+export function calculateOvertimeHours(outTime: string, inTime: string = "06:00", status: string = "Present"): number {
   const worked = calculateWorkingHours(status, inTime, outTime);
   return worked > 8.0 ? parseFloat((worked - 8.0).toFixed(1)) : 0;
 }

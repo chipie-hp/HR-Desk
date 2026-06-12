@@ -73,7 +73,7 @@ export default function Leave({
     Object.values(state.attendance).forEach(day => {
       const record = day[idToQuery];
       if (record && record.status === "Present" && record.outTime) {
-        totalOT += calculateOvertimeHours(record.outTime, record.inTime || "08:00", record.status);
+        totalOT += calculateOvertimeHours(record.outTime, record.inTime || "06:00", record.status);
       }
     });
 

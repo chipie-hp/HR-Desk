@@ -55,6 +55,10 @@ interface EmployeesProps {
 
 type TabType = "overview" | "financials" | "attendance" | "compliance";
 
+const liveCapitalize = (val: string): string => {
+  return val.replace(/(^\w|\s\w)/g, (m) => m.toUpperCase());
+};
+
 export default function Employees({
   state,
   onAddEmployee,
@@ -534,7 +538,7 @@ export default function Employees({
   const [newLast, setNewLast] = useState("");
   const [newGender, setNewGender] = useState("Female");
   const [newPosition, setNewPosition] = useState("");
-  const [newDept, setNewDept] = useState<Employee["dept"]>("Operations");
+  const [newDept, setNewDept] = useState<Employee["dept"]>("Kitchen");
   const [newBranch, setNewBranch] = useState("");
   const [newSalary, setNewSalary] = useState(250000);
   const [newCStart, setNewCStart] = useState("");
@@ -1402,7 +1406,7 @@ export default function Employees({
                 required
                 placeholder="Alinafe"
                 value={newFirst}
-                onChange={(e) => setNewFirst(e.target.value)}
+                onChange={(e) => setNewFirst(liveCapitalize(e.target.value))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
               />
             </div>
@@ -1415,7 +1419,7 @@ export default function Employees({
                 required
                 placeholder="Phiri"
                 value={newLast}
-                onChange={(e) => setNewLast(e.target.value)}
+                onChange={(e) => setNewLast(liveCapitalize(e.target.value))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
               />
             </div>
@@ -1493,7 +1497,7 @@ export default function Employees({
                 type="text"
                 placeholder="Or specify custom title"
                 value={newPosition}
-                onChange={(e) => setNewPosition(e.target.value)}
+                onChange={(e) => setNewPosition(liveCapitalize(e.target.value))}
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
               />
             </div>
@@ -1940,7 +1944,7 @@ export default function Employees({
                               <input
                                 type="text"
                                 value={editFirst}
-                                onChange={(e) => setEditFirst(e.target.value)}
+                                onChange={(e) => setEditFirst(liveCapitalize(e.target.value))}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                               />
                             </div>
@@ -1949,7 +1953,7 @@ export default function Employees({
                               <input
                                 type="text"
                                 value={editLast}
-                                onChange={(e) => setEditLast(e.target.value)}
+                                onChange={(e) => setEditLast(liveCapitalize(e.target.value))}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                               />
                             </div>
@@ -2014,7 +2018,7 @@ export default function Employees({
                               <input
                                 type="text"
                                 value={editPosition}
-                                onChange={(e) => setEditPosition(e.target.value)}
+                                onChange={(e) => setEditPosition(liveCapitalize(e.target.value))}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                               />
                             </div>

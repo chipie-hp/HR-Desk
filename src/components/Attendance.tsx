@@ -69,7 +69,7 @@ export default function Attendance({
         // Default present status standard shift hours
         newLocal[emp.id] = {
           status: "Present",
-          inTime: "08:00",
+          inTime: "06:00",
           outTime: "17:00",
         };
       }
@@ -108,7 +108,7 @@ export default function Attendance({
         ...prev[empId],
         status,
         // Preset check times elegantly if absent/sick/leave
-        inTime: status === "Absent" ? "00:00" : status === "Sick" || status === "Leave" ? "00:00" : prev[empId]?.inTime || "08:00",
+        inTime: status === "Absent" ? "00:00" : status === "Sick" || status === "Leave" ? "00:00" : prev[empId]?.inTime || "06:00",
         outTime: status === "Absent" ? "00:00" : status === "Sick" || status === "Leave" ? "00:00" : prev[empId]?.outTime || "17:00",
         sickSelectedAt: status === "Sick" ? new Date().toISOString() : prev[empId]?.sickSelectedAt,
         autoDeducted: status === "Sick" ? false : prev[empId]?.autoDeducted
@@ -141,7 +141,7 @@ export default function Attendance({
     filteredEmployees.forEach(emp => {
       updated[emp.id] = {
         status: "Present",
-        inTime: "08:00",
+        inTime: "06:00",
         outTime: "17:00",
       };
     });
@@ -161,7 +161,7 @@ export default function Attendance({
   const handleExportAttendance = () => {
     const headers = ["Employee ID", "Employee Name", "Branch Location", "Department Module", "Attendance Date", "Registry Status", "Check-In Time", "Check-Out Time", "Actual Worked Hours", "Overtime (Hrs)"];
     const rows = filteredEmployees.map(emp => {
-      const record = localAttendance[emp.id] || { status: "Present", inTime: "08:00", outTime: "17:00" };
+      const record = localAttendance[emp.id] || { status: "Present", inTime: "06:00", outTime: "17:00" };
       const hours = calculateWorkedHours(record.status, record.inTime, record.outTime);
       const ot = calculateOvertimeHours(record.outTime, record.inTime, record.status);
       return [
@@ -770,14 +770,14 @@ export default function Attendance({
                 </tr>
               ) : (
                 filteredEmployees.map(emp => {
-                  const record = localAttendance[emp.id] || { status: "Present", inTime: "08:00", outTime: "17:00" };
+                  const record = localAttendance[emp.id] || { status: "Present", inTime: "06:00", outTime: "17:00" };
                   
                   // Compute dynamic hours
                   const workedHours = calculateWorkedHours(record.status, record.inTime, record.outTime);
                   const overtimeHours = calculateOvertimeHours(record.outTime, record.inTime, record.status);
 
                   // Warnings triggers
-                  const isLateArrival = record.status === "Present" && record.inTime > "08:15";
+                  const isLateArrival = record.status === "Present" && record.inTime > "06:15";
                   const isEarlyDeparture = record.status === "Present" && record.outTime !== "00:00" && record.outTime < "17:00";
 
                   const badgeColors = {
