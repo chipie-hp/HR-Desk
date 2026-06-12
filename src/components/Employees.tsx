@@ -59,6 +59,17 @@ const liveCapitalize = (val: string): string => {
   return val.replace(/(^\w|\s\w)/g, (m) => m.toUpperCase());
 };
 
+const calculateOneYearExpiry = (startDateStr: string): string => {
+  if (!startDateStr) return "";
+  const d = new Date(startDateStr);
+  if (isNaN(d.getTime())) return "";
+  d.setFullYear(d.getFullYear() + 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
 export default function Employees({
   state,
   onAddEmployee,
@@ -536,7 +547,7 @@ export default function Employees({
 
   const [newFirst, setNewFirst] = useState("");
   const [newLast, setNewLast] = useState("");
-  const [newGender, setNewGender] = useState("Female");
+  const [newGender, setNewGender] = useState("Male");
   const [newPosition, setNewPosition] = useState("");
   const [newDept, setNewDept] = useState<Employee["dept"]>("Kitchen");
   const [newBranch, setNewBranch] = useState("");
@@ -1526,7 +1537,13 @@ export default function Employees({
               <input
                 type="date"
                 value={newCStart}
-                onChange={(e) => setNewCStart(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setNewCStart(val);
+                  if (val) {
+                    setNewCEnd(calculateOneYearExpiry(val));
+                  }
+                }}
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
               />
             </div>
@@ -2039,7 +2056,13 @@ export default function Employees({
                               <input
                                 type="date"
                                 value={editCStart}
-                                onChange={(e) => setEditCStart(e.target.value)}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setEditCStart(val);
+                                  if (val) {
+                                    setEditCEnd(calculateOneYearExpiry(val));
+                                  }
+                                }}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                               />
                             </div>
