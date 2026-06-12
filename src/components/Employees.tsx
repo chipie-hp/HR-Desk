@@ -51,6 +51,7 @@ interface EmployeesProps {
   externalProfileEmployeeId?: string;
   onClearExternalProfileEmployeeId?: () => void;
   isDossierOnly?: boolean;
+  selectedBranch?: string;
 }
 
 type TabType = "overview" | "financials" | "attendance" | "compliance";
@@ -82,6 +83,7 @@ export default function Employees({
   externalProfileEmployeeId,
   onClearExternalProfileEmployeeId,
   isDossierOnly = false,
+  selectedBranch = "all",
 }: EmployeesProps) {
   // Navigation & View layout
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -1004,7 +1006,7 @@ export default function Employees({
 
           <button
             onClick={() => {
-              setNewBranch(state.branches[0] || "");
+              setNewBranch(selectedBranch !== "all" ? selectedBranch : (state.branches[0] || ""));
               setIsAddOpen(true);
             }}
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-600 transition"
@@ -1015,7 +1017,7 @@ export default function Employees({
           
           <button
             onClick={() => {
-              setBatchBranch(state.branches[0] || "");
+              setBatchBranch(selectedBranch !== "all" ? selectedBranch : (state.branches[0] || ""));
               setIsBatchOpen(true);
             }}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"

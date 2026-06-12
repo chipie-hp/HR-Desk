@@ -26,7 +26,8 @@ import {
   UserCheck2,
   FileCheck2,
   LockKeyhole,
-  FileWarning
+  FileWarning,
+  ChevronRight
 } from "lucide-react";
 
 import { 
@@ -34,6 +35,7 @@ import {
   Employee, 
   AttendanceRecord, 
   AttendanceDatabase,
+  DayAttendance,
   DeductionApproval, 
   LeaveRequest, 
   Loan, 
@@ -70,6 +72,10 @@ export default function App() {
   const [authRole, setAuthRole] = useState<"Admin" | "HR" | "Viewer">("Admin");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState(false);
+
+  // Global Branch Selection states
+  const [selectedBranch, setSelectedBranch] = useState("all");
+  const [hasSelectedInitialBranch, setHasSelectedInitialBranch] = useState(false);
 
   // Core navigation state
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -473,6 +479,8 @@ export default function App() {
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    setSelectedBranch("all");
+    setHasSelectedInitialBranch(false);
     setActiveTab("dashboard");
     addLogEvent("Authentication", `Active workspace session closed.`);
     showToast("Workspace terminal disconnected.", "info");
@@ -490,13 +498,48 @@ export default function App() {
     }
   };
 
+  // Dynamic Branch Filtering of State
+  const getFilteredState = (): DatabaseState => {
+    if (selectedBranch === "all") {
+      return dbState;
+    }
+    
+    const filteredEmployees = dbState.employees.filter(emp => emp.branch === selectedBranch);
+    const employeeIdsSet = new Set(filteredEmployees.map(emp => emp.id));
+    
+    const filteredAttendance: AttendanceDatabase = {};
+    Object.entries(dbState.attendance).forEach(([date, dayRecord]) => {
+      const filteredDayRecord: DayAttendance = {};
+      Object.entries(dayRecord).forEach(([empId, record]) => {
+        if (employeeIdsSet.has(empId)) {
+          filteredDayRecord[empId] = record;
+        }
+      });
+      filteredAttendance[date] = filteredDayRecord;
+    });
+    
+    return {
+      ...dbState,
+      employees: filteredEmployees,
+      attendance: filteredAttendance,
+      leave: dbState.leave.filter(l => employeeIdsSet.has(l.empId)),
+      payroll: dbState.payroll.filter(p => employeeIdsSet.has(p.id)),
+      loans: dbState.loans.filter(l => employeeIdsSet.has(l.empId)),
+      advances: dbState.advances.filter(a => employeeIdsSet.has(a.empId)),
+      disciplinary: dbState.disciplinary.filter(d => employeeIdsSet.has(d.empId)),
+      documents: dbState.documents.filter(d => employeeIdsSet.has(d.empId)),
+      deductionApprovals: dbState.deductionApprovals.filter(d => employeeIdsSet.has(d.empId)),
+    };
+  };
+
   // Main UI Tab Switch routing
   const renderActiveWidget = () => {
+    const filteredState = getFilteredState();
     switch (activeTab) {
       case "dashboard":
         return (
           <Dashboard 
-            state={dbState} 
+            state={filteredState} 
             logs={logs} 
             onSelectEmployee={handleSelectEmployee} 
             setActiveTab={setActiveTab}
@@ -505,7 +548,7 @@ export default function App() {
       case "employees":
         return (
           <Employees
-            state={dbState}
+            state={filteredState}
             onAddEmployee={handleAddEmployee}
             onRemoveEmployee={handleRemoveEmployee}
             onRemoveEmployees={handleRemoveEmployees}
@@ -516,12 +559,13 @@ export default function App() {
             externalProfileEmployeeId={externalProfileEmployeeId}
             onClearExternalProfileEmployeeId={() => setExternalProfileEmployeeId(undefined)}
             isDossierOnly={false}
+            selectedBranch={selectedBranch}
           />
         );
       case "attendance":
         return (
           <Attendance
-            state={dbState}
+            state={filteredState}
             onSaveAttendance={handleSaveAttendance}
             onUpdateFullAttendance={handleUpdateFullAttendance}
             onApplyPenalty={handleApplyPenalty}
@@ -533,7 +577,7 @@ export default function App() {
       case "leave":
         return (
           <Leave
-            state={dbState}
+            state={filteredState}
             onApplyLeave={handleApplyLeave}
             onUpdateEmployee={handleUpdateEmployee}
             onSelectEmployee={handleSelectEmployee}
@@ -543,7 +587,7 @@ export default function App() {
       case "payroll":
         return (
           <Payroll
-            state={dbState}
+            state={filteredState}
             onRunPayroll={handleRunPayroll}
             showToast={showToast}
           />
@@ -551,7 +595,7 @@ export default function App() {
       case "loans":
         return (
           <Loans
-            state={dbState}
+            state={filteredState}
             onRecordLoan={handleRecordLoan}
             onPayOffLoan={handlePayOffLoan}
             onSelectEmployee={handleSelectEmployee}
@@ -561,7 +605,7 @@ export default function App() {
       case "advances":
         return (
           <Advances
-            state={dbState}
+            state={filteredState}
             onIssueAdvance={handleIssueAdvance}
             onSelectEmployee={handleSelectEmployee}
             showToast={showToast}
@@ -570,7 +614,7 @@ export default function App() {
       case "disciplinary":
         return (
           <Disciplinary
-            state={dbState}
+            state={filteredState}
             onAddDisciplinary={handleAddDisciplinary}
             onSelectEmployee={handleSelectEmployee}
             showToast={showToast}
@@ -579,7 +623,7 @@ export default function App() {
       case "deductions":
         return (
           <Deductions
-            state={dbState}
+            state={filteredState}
             onApplyDeduction={handleApplyPenalty}
             onDeleteDeduction={handleDeleteDeductionApproval}
             onSelectEmployee={handleSelectEmployee}
@@ -589,7 +633,7 @@ export default function App() {
       case "documents":
         return (
           <Documents
-            state={dbState}
+            state={filteredState}
             onArchiveDocument={handleArchiveDocument}
             onSelectEmployee={handleSelectEmployee}
             showToast={showToast}
@@ -656,7 +700,7 @@ export default function App() {
                 <select
                   value={authRole}
                   onChange={(e) => setAuthRole(e.target.value as any)}
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 text-sm font-semibold text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 text-sm font-semibold text-slate-101 placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
                 >
                   <option value="Admin">Admin / HR Manager</option>
                   <option value="HR">HR Officer</option>
@@ -694,6 +738,101 @@ export default function App() {
           </div>
         </div>
         
+        <ToastContainer toasts={toasts} removeToast={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
+      </div>
+    );
+  }
+
+  // SECONDARY GATE: WORKSPACE BRANCH DIRECTION SELECTION
+  if (isAuthenticated && !hasSelectedInitialBranch) {
+    return (
+      <div className="min-h-screen relative flex items-center justify-center bg-gradient-to-tr from-slate-900 via-emerald-950/65 to-slate-950 overflow-hidden font-sans">
+        
+        {/* Ambient mesh background effects */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(16,185,129,0.06),transparent)]" />
+        <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-slate-950/40" />
+
+        <div className="w-full max-w-4xl p-6 relative z-10 animate-fade-in">
+          <div className="text-center mb-10">
+            <h2 className="text-3xl font-black text-white tracking-tight uppercase">
+              SELECT ACTIVE BRANCH WORKSPACE
+            </h2>
+            <p className="mt-2 text-xs text-slate-400 font-semibold uppercase tracking-wider">
+              Choose a branch registry to initialize your session
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* CARD 1: ALL BRANCHES */}
+            <button
+              onClick={() => {
+                setSelectedBranch("all");
+                setHasSelectedInitialBranch(true);
+              }}
+              className="group flex flex-col justify-between items-start text-left p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 hover:from-emerald-500 hover:to-emerald-600 border border-emerald-500/20 hover:border-emerald-400 transition-all duration-300 transform hover:-translate-y-1 shadow-lg hover:shadow-emerald-500/10 cursor-pointer"
+            >
+              <div className="mb-8">
+                <span className="flex items-center justify-center h-12 w-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-4 group-hover:bg-white/20 group-hover:text-white">
+                  <Users className="h-6 w-6" />
+                </span>
+                <h3 className="text-lg font-bold text-white group-hover:text-white uppercase">
+                  All Branches
+                </h3>
+                <p className="text-xs text-slate-400 group-hover:text-emerald-100 mt-1.5 font-medium leading-relaxed">
+                  Consolidated enterprise view of all employees and regional operations across the entire organization.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 text-emerald-400 group-hover:text-white font-bold text-xs uppercase tracking-wider">
+                <span>Access Dashboard</span>
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+              </div>
+            </button>
+
+            {/* DYNAMIC BRANCHES CARDS */}
+            {dbState.branches.map((br) => {
+              const empCount = dbState.employees.filter(emp => emp.branch === br).length;
+              return (
+                <button
+                  key={br}
+                  onClick={() => {
+                    setSelectedBranch(br);
+                    setHasSelectedInitialBranch(true);
+                  }}
+                  className="group flex flex-col justify-between items-start text-left p-6 rounded-2xl bg-slate-950/40 hover:bg-emerald-500 hover:text-white border border-slate-800 hover:border-emerald-400 transition-all duration-300 transform hover:-translate-y-1 shadow-md hover:shadow-emerald-500/10 cursor-pointer"
+                >
+                  <div className="mb-8 col-span-1">
+                    <span className="flex items-center justify-center h-12 w-12 rounded-xl bg-slate-900 text-slate-400 border border-slate-800 mb-4 group-hover:bg-white/25 group-hover:text-white">
+                      <Leaf className="h-6 w-6 text-emerald-500 group-hover:text-white" />
+                    </span>
+                    <h3 className="text-lg font-bold text-white group-hover:text-white uppercase truncate w-full">
+                      {br}
+                    </h3>
+                    <p className="text-xs text-slate-404 group-hover:text-emerald-100 mt-1.5 font-mono">
+                      {empCount} {empCount === 1 ? "Employee" : "Employees"} Active
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-white font-bold text-xs uppercase tracking-wider">
+                    <span>Select registry</span>
+                    <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="text-center mt-12 bg-slate-950/20 rounded-xl p-4 border border-slate-900/60 max-w-sm mx-auto">
+            <button
+              onClick={() => {
+                setIsAuthenticated(false);
+                setAuthPassword("");
+              }}
+              className="text-xs font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-colors"
+            >
+              ← Back to Login Screen
+            </button>
+          </div>
+        </div>
+
         <ToastContainer toasts={toasts} removeToast={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
       </div>
     );
@@ -791,10 +930,31 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4.5">
+            {/* Global Branch Selector dropdown */}
+            <div className="flex items-center gap-2">
+              <span className="hidden lg:inline text-[9px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                Active Branch:
+              </span>
+              <select
+                id="header-branch-select"
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 px-3 py-1.5 text-xs font-bold text-slate-750 dark:text-slate-200 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all cursor-pointer"
+              >
+                <option value="all">ALL OPERATIONS BRANCHES</option>
+                {dbState.branches.map((br) => (
+                  <option key={br} value={br}>
+                    {br.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Color Theme toggle */}
             <button
               onClick={handleThemeModeToggle}
               className="rounded-xl border border-slate-150 p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition dark:border-slate-800 dark:hover:bg-slate-900"
+              id="theme-toggle-button"
             >
               {isThemeDark ? <Sun className="h-4.5 w-4.5 text-amber-500 animate-spin" /> : <Moon className="h-4.5 w-4.5 text-slate-500" />}
             </button>
@@ -856,7 +1016,7 @@ export default function App() {
       {/* Global Dossier-only Container */}
       {activeTab !== "employees" && (
         <Employees
-          state={dbState}
+          state={getFilteredState()}
           onAddEmployee={handleAddEmployee}
           onRemoveEmployee={handleRemoveEmployee}
           onRemoveEmployees={handleRemoveEmployees}
@@ -867,6 +1027,7 @@ export default function App() {
           externalProfileEmployeeId={externalProfileEmployeeId}
           onClearExternalProfileEmployeeId={() => setExternalProfileEmployeeId(undefined)}
           isDossierOnly={true}
+          selectedBranch={selectedBranch}
         />
       )}
     </div>
