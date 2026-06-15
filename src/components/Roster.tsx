@@ -19,9 +19,11 @@ import {
   Sparkles,
   ChevronRight,
   ShieldCheck,
-  Info
+  Info,
+  Edit2
 } from "lucide-react";
 import { DatabaseState, Employee, RosterEntry, RosterAssignment } from "../types";
+import { ConfirmModal } from "./Modals";
 
 interface RosterProps {
   state: DatabaseState;
@@ -59,6 +61,13 @@ const getDatesInRange = (startStr: string, endStr: string) => {
   return dates;
 };
 
+// Check if employee is designated to be protected as always Day shift
+const isAlwaysDayShift = (emp: Employee) => {
+  const isBena = (emp.first + " " + emp.last).toLowerCase().includes("benardino") || (emp.first + " " + emp.last).toLowerCase().includes("bernardino");
+  const isAdmin = emp.position && emp.position.toLowerCase().includes("admin");
+  return !!(isBena || isAdmin);
+};
+
 export default function Roster({
   state,
   onSaveRoster,
@@ -68,7 +77,10 @@ export default function Roster({
 }: RosterProps) {
   // Main view state
   const [activeRosterId, setActiveRosterId] = useState<string>("");
+  const [rosterToDelete, setRosterToDelete] = useState<RosterEntry | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [editingRosterId, setEditingRosterId] = useState<string>("");
+  const [gridSearchTerm, setGridSearchTerm] = useState<string>("");
 
   // New Roster builder temporary state
   const [newName, setNewName] = useState("");
@@ -90,6 +102,14 @@ export default function Roster({
   // Local grid assignments state while editing a roster profile
   const [localAssignments, setLocalAssignments] = useState<RosterAssignment[]>([]);
   
+  // Smart Scheduling Assignment Wizard
+  const [wizardSelectedEmpIds, setWizardSelectedEmpIds] = useState<string[]>([]);
+  const [wizardShift, setWizardShift] = useState<"Day" | "Night" | "Off">("Day");
+  const [wizardStart, setWizardStart] = useState("");
+  const [wizardEnd, setWizardEnd] = useState("");
+  const [wizardSearchTerm, setWizardSearchTerm] = useState("");
+  const [wizardOffDays, setWizardOffDays] = useState<string[]>([]);
+
   // Spotlight date for dashboard duty inspection
   const [spotlightDate, setSpotlightDate] = useState<string>("");
 
@@ -119,8 +139,14 @@ export default function Roster({
   // Preset roster assignments helper
   const handlePresetAssignments = (pattern: "all-day" | "all-night" | "alternating" | "weekends-off", dates: string[]) => {
     const fresh: RosterAssignment[] = branchEmployees.map((emp, empIdx) => {
+      // rule: administrators and Benardino auto-selected to Day shift always
       const shifts: { [d: string]: "Day" | "Night" | "Off" } = {};
       dates.forEach((dStr, dIdx) => {
+        if (isAlwaysDayShift(emp)) {
+          shifts[dStr] = "Day";
+          return;
+        }
+
         const dObj = new Date(dStr);
         const isWeekend = dObj.getDay() === 0 || dObj.getDay() === 6; // Sun = 0, Sat = 6
 
@@ -141,7 +167,7 @@ export default function Roster({
       return { empId: emp.id, shifts };
     });
     setLocalAssignments(fresh);
-    showToast(`Roster draft populated using ${pattern.replace('-', ' ')} template!`, "info");
+    showToast(`Roster draft populated using ${pattern.replace('-', ' ')} template! Administrators and Benardino are locked to Day duty.`, "info");
   };
 
   // Switch on single cell ClickCycle
@@ -165,20 +191,156 @@ export default function Roster({
   // Start designing a roster
   const handleInitCreateForm = () => {
     setIsCreating(true);
+    setEditingRosterId("");
     setNewName(`Shift Roster Plan - ${new Date(newStart).toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}`);
     const dates = getDatesInRange(newStart, newEnd);
+    
+    // Default wizard configurations matching roster scope
+    setWizardStart(newStart);
+    setWizardEnd(newEnd);
+    setWizardSelectedEmpIds([]);
+    setWizardSearchTerm("");
+    setWizardOffDays([]);
     
     // Default assignment initial profiles
     const initial: RosterAssignment[] = branchEmployees.map((emp) => {
       const shifts: { [d: string]: "Day" | "Night" | "Off" } = {};
       dates.forEach(d => {
-        // Default weekends (Sat/Sun) to Off, weekdays to Day
-        const dayOfWeek = new Date(d).getDay();
-        shifts[d] = (dayOfWeek === 0 || dayOfWeek === 6) ? "Off" : "Day";
+        if (isAlwaysDayShift(emp)) {
+          shifts[d] = "Day";
+        } else {
+          // Default weekends (Sat/Sun) to Off, weekdays to Day
+          const dayOfWeek = new Date(d).getDay();
+          shifts[d] = (dayOfWeek === 0 || dayOfWeek === 6) ? "Off" : "Day";
+        }
       });
       return { empId: emp.id, shifts };
     });
     setLocalAssignments(initial);
+  };
+
+  const handleApplyWizard = () => {
+    if (wizardSelectedEmpIds.length === 0) {
+      showToast("Please select at least one teammate to schedule.", "error");
+      return;
+    }
+    if (!wizardStart || !wizardEnd || wizardStart > wizardEnd) {
+      showToast("Please define a valid date duration.", "error");
+      return;
+    }
+    if (wizardStart < newStart || wizardEnd > newEnd) {
+      showToast(`Selected duration must lie within the drafted roster period: ${newStart} to ${newEnd}.`, "error");
+      return;
+    }
+
+    const wizardDates = getDatesInRange(wizardStart, wizardEnd);
+
+    setLocalAssignments(prev => prev.map(asg => {
+      const isSelected = wizardSelectedEmpIds.includes(asg.empId);
+      const isBranchMember = branchEmployees.some(e => e.id === asg.empId);
+      const asgEmployee = branchEmployees.find(e => e.id === asg.empId);
+
+      if (isSelected) {
+        const updatedShifts = { ...asg.shifts };
+        wizardDates.forEach(d => {
+          if (asgEmployee && isAlwaysDayShift(asgEmployee)) {
+            updatedShifts[d] = "Day";
+          } else {
+            const dayOfWeek = new Date(d).getDay().toString(); // "0" Sunday ... "6" Saturday
+            if (wizardOffDays.includes(dayOfWeek)) {
+              updatedShifts[d] = "Off";
+            } else {
+              updatedShifts[d] = wizardShift;
+            }
+          }
+        });
+        return {
+          ...asg,
+          shifts: updatedShifts
+        };
+      } else if (isBranchMember && wizardShift === "Day") {
+        // Automatically set the rest of active branch staff to Night Shift
+        const updatedShifts = { ...asg.shifts };
+        wizardDates.forEach(d => {
+          if (asgEmployee && isAlwaysDayShift(asgEmployee)) {
+            updatedShifts[d] = "Day";
+          } else {
+            const dayOfWeek = new Date(d).getDay().toString();
+            if (wizardOffDays.includes(dayOfWeek)) {
+              updatedShifts[d] = "Off";
+            } else {
+              updatedShifts[d] = "Night";
+            }
+          }
+        });
+        return {
+          ...asg,
+          shifts: updatedShifts
+        };
+      }
+      return asg;
+    }));
+
+    if (wizardShift === "Day") {
+      showToast(`⚡ Multi-Assign completed: Assigned Day Shift to selected staff, and auto-scheduled remaining branch staff to Night Shift (protecting standard Day administrators).`, "success");
+    } else {
+      showToast(`⚡ Multi-Assign completed: Applied ${wizardShift} Shift to ${wizardSelectedEmpIds.length} personnel, keeping administrators on Day shift.`, "success");
+    }
+  };
+
+  const handleAutoRotateShifts = () => {
+    const branchRosters = (state.roster || [])
+      .filter(r => r.branch === (selectedBranch === "all" ? (state.branches[0] || "Main Branch") : selectedBranch))
+      .sort((a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime());
+    
+    const latestPriorRoster = branchRosters.find(r => r.id !== editingRosterId);
+    
+    if (!latestPriorRoster) {
+      showToast("No previous roster found for this branch to analyze and rotate.", "error");
+      return;
+    }
+
+    const dates = getDatesInRange(newStart, newEnd);
+    const rotated: RosterAssignment[] = branchEmployees.map(emp => {
+      // rule: administrators and Benardino auto-selected to Day shift always
+      if (isAlwaysDayShift(emp)) {
+        const shifts: { [d: string]: "Day" | "Night" | "Off" } = {};
+        dates.forEach(d => {
+          shifts[d] = "Day";
+        });
+        return { empId: emp.id, shifts };
+      }
+
+      const priorAsg = latestPriorRoster.assignments.find(a => a.empId === emp.id);
+      let priorDominant: "Day" | "Night" = "Day";
+      
+      if (priorAsg) {
+        let dayCount = 0;
+        let nightCount = 0;
+        Object.values(priorAsg.shifts).forEach(sh => {
+          if (sh === "Day") dayCount++;
+          if (sh === "Night") nightCount++;
+        });
+        if (nightCount >= dayCount) {
+          priorDominant = "Night";
+        }
+      }
+
+      // Rotate to alternative shift
+      const targetShift: "Day" | "Night" = priorDominant === "Day" ? "Night" : "Day";
+      
+      const shifts: { [d: string]: "Day" | "Night" | "Off" } = {};
+      dates.forEach(d => {
+        const dayOfWeek = new Date(d).getDay();
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        shifts[d] = isWeekend ? "Off" : targetShift;
+      });
+
+      return { empId: emp.id, shifts };
+    });
+
+    setLocalAssignments(rotated);
+    showToast(`🔄 Shift rotation completed! Rotated Day/Night roles based on the previous roster run "${latestPriorRoster.name}". Administrators are kept on Day duty.`, "success");
   };
 
   const handleSaveDraft = () => {
@@ -193,7 +355,7 @@ export default function Roster({
     }
 
     const built: RosterEntry = {
-      id: "RST-" + Date.now(),
+      id: editingRosterId || ("RST-" + Date.now()),
       name: newName,
       startDate: newStart,
       endDate: newEnd,
@@ -204,7 +366,8 @@ export default function Roster({
     onSaveRoster(built);
     setActiveRosterId(built.id);
     setIsCreating(false);
-    showToast("Operational duty roster published successfully!", "success");
+    setEditingRosterId("");
+    showToast(editingRosterId ? "Roster revisions published successfully!" : "Operational duty roster published successfully!", "success");
   };
 
   // Generate a premium print dialog frame triggers
@@ -473,82 +636,341 @@ export default function Roster({
                 {pres.label.toUpperCase()}
               </button>
             ))}
+            <button
+              onClick={handleAutoRotateShifts}
+              className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1 text-[10px] font-extrabold text-amber-700 shadow-sm hover:bg-amber-100 dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-300 cursor-pointer flex items-center gap-1 shrink-0"
+              title="Aligns staff opposite of their last roster's shifts automatically"
+            >
+              🔄 ROTATE SHIFTS (DAY ↔ NIGHT FROM PRIOR RUN)
+            </button>
           </div>
 
-          {/* SPREADSHEET-LIKE EDIT GRID */}
-          <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-950">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
-                    <th className="p-4 text-xs font-black uppercase text-slate-500 dark:text-slate-400 w-52 shrink-0 sticky left-0 bg-slate-50 dark:bg-slate-900 z-10">
-                      Staff Member
-                    </th>
-                    {getDatesInRange(newStart, newEnd).map(d => {
-                      const dayName = new Date(d).toLocaleDateString("en-GB", { weekday: "short" });
-                      return (
-                        <th key={d} className="p-4 text-xs font-black uppercase text-slate-500 dark:text-slate-400 text-center min-w-[70px]">
-                          <div>{dayName.toUpperCase()}</div>
-                          <div className="text-[9px] opacity-60 mt-0.5">{formatDateString(d)}</div>
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-150 dark:divide-slate-900">
-                  {branchEmployees.length === 0 ? (
-                    <tr>
-                      <td colSpan={getDatesInRange(newStart, newEnd).length + 1} className="py-12 text-center text-slate-400">
-                        No employees registered in this branch workspace to schedule.
-                      </td>
-                    </tr>
-                  ) : (
-                    branchEmployees.map(emp => {
-                      const empAsg = localAssignments.find(a => a.empId === emp.id);
-                      return (
-                        <tr key={emp.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/40">
-                          <td className="p-4 font-bold text-xs sticky left-0 bg-white dark:bg-slate-950 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
-                            <span className="block text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                              {emp.first} {emp.last}
-                            </span>
-                            <span className="block text-[10px] text-slate-400 font-medium whitespace-nowrap">
-                              {emp.position}
-                            </span>
-                          </td>
-                          {getDatesInRange(newStart, newEnd).map(d => {
-                            const curShift = empAsg?.shifts[d] || "Off";
-                            let cellStyle = "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-450";
-                            let icon = <XCircle className="h-3 w-3 shrink-0" />;
+          {/* SMART PLANNED WIZARD CONTROLS */}
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/15 p-5 dark:border-indigo-950 dark:bg-indigo-950/10 space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400">
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
+              <h4 className="text-xs font-black uppercase text-indigo-800 dark:text-indigo-300 tracking-wider">
+                ⚡ Smart Bulk Assignment Planner
+              </h4>
+            </div>
 
-                            if (curShift === "Day") {
-                              cellStyle = "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400 border border-emerald-500/25";
-                              icon = <Sun className="h-3 w-3 shrink-0" />;
-                            } else if (curShift === "Night") {
-                              cellStyle = "bg-purple-500/10 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400 border border-purple-500/25";
-                              icon = <Moon className="h-3 w-3 shrink-0" />;
-                            }
+            {(() => {
+              const filteredWizardEmployees = branchEmployees.filter(emp => {
+                if (!wizardSearchTerm) return true;
+                const matchStr = `${emp.first} ${emp.last} ${emp.position} ${emp.branch} ${emp.dept}`.toLowerCase();
+                return matchStr.includes(wizardSearchTerm.toLowerCase());
+              });
 
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5.5">
+                  {/* Teammates Choice checklist */}
+                  <div className="lg:col-span-6 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Step 1: Choose personnel ({wizardSelectedEmpIds.length} chosen)
+                      </label>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setWizardSelectedEmpIds(prev => Array.from(new Set([...prev, ...filteredWizardEmployees.map(e => e.id)])))}
+                          className="text-[9px] font-black uppercase tracking-wide text-indigo-600 hover:underline cursor-pointer"
+                        >
+                          Select All
+                        </button>
+                        <span className="text-[9px] text-slate-350">|</span>
+                        <button
+                          type="button"
+                          onClick={() => setWizardSelectedEmpIds(prev => prev.filter(id => !filteredWizardEmployees.some(fe => fe.id === id)))}
+                          className="text-[9px] font-black uppercase tracking-wide text-slate-500 hover:underline cursor-pointer"
+                        >
+                          Clear Visible
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Filter Input search */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="🔍 Search employees by name, title, department..."
+                        value={wizardSearchTerm}
+                        onChange={(e) => setWizardSearchTerm(e.target.value)}
+                        className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                      />
+                      {wizardSearchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setWizardSearchTerm("")}
+                          className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-black leading-none"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-xl p-2.5 space-y-1.5 bg-white dark:bg-slate-900 dark:border-slate-800">
+                      {filteredWizardEmployees.length === 0 ? (
+                        <div className="text-center py-6 text-[10px] text-slate-400">
+                          No matching personnel found in active branch.
+                        </div>
+                      ) : (
+                        filteredWizardEmployees.map(emp => {
+                          const isSelected = wizardSelectedEmpIds.includes(emp.id);
+                          const isProtectedDay = isAlwaysDayShift(emp);
+                          return (
+                            <label
+                              key={emp.id}
+                              className={`flex items-center justify-between px-2 py-1 rounded-lg cursor-pointer text-xs font-semibold transition ${
+                                isSelected 
+                                  ? "bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300"
+                                  : "hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setWizardSelectedEmpIds(prev => [...prev, emp.id]);
+                                    } else {
+                                      setWizardSelectedEmpIds(prev => prev.filter(id => id !== emp.id));
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+                                />
+                                <span className="truncate">{emp.first} {emp.last} <span className="text-[10px] opacity-60 font-normal">({emp.position})</span></span>
+                              </div>
+                              {isProtectedDay && (
+                                <span className="text-[8px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded uppercase font-mono tracking-tight font-black inline-block shrink-0">
+                                  ☀️ ALWAYS DAY
+                                </span>
+                              )}
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Roster Assignment Parameters */}
+                  <div className="lg:col-span-6 flex flex-col justify-between gap-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                          Step 2: Shift (Assigned)
+                        </label>
+                        <select
+                          value={wizardShift}
+                          onChange={(e) => setWizardShift(e.target.value as any)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-800 focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100 cursor-pointer"
+                        >
+                          <option value="Day">☀️ Day Shift</option>
+                          <option value="Night">🌙 Night Shift</option>
+                          <option value="Off">🏝️ Off duty</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                          Repeating Off-Days (Multiple)
+                        </label>
+                        <div className="flex gap-1 flex-wrap">
+                          {[
+                            { label: "S", value: "0", title: "Sunday" },
+                            { label: "M", value: "1", title: "Monday" },
+                            { label: "T", value: "2", title: "Tuesday" },
+                            { label: "W", value: "3", title: "Wednesday" },
+                            { label: "T", value: "4", title: "Thursday" },
+                            { label: "F", value: "5", title: "Friday" },
+                            { label: "S", value: "6", title: "Saturday" },
+                          ].map(day => {
+                            const active = wizardOffDays.includes(day.value);
                             return (
-                              <td key={d} className="p-2 text-center align-middle">
-                                <button
-                                  type="button"
-                                  onClick={() => cycleShift(emp.id, d)}
-                                  className={`w-full flex flex-col items-center justify-center p-2 rounded-xl text-[10px] font-extrabold cursor-pointer transition ${cellStyle}`}
-                                >
-                                  {icon}
-                                  <span className="mt-1 font-mono">{curShift.toUpperCase()}</span>
-                                </button>
-                              </td>
+                              <button
+                                key={day.value}
+                                type="button"
+                                title={day.title}
+                                onClick={() => {
+                                  if (active) {
+                                    setWizardOffDays(prev => prev.filter(v => v !== day.value));
+                                  } else {
+                                    setWizardOffDays(prev => [...prev, day.value]);
+                                  }
+                                }}
+                                className={`h-7 w-7 text-[10px] font-black rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
+                                  active
+                                    ? "bg-rose-500 text-white shadow-sm"
+                                    : "bg-slate-100 hover:bg-slate-200 text-slate-650 dark:bg-slate-800 dark:hover:bg-slate-750 dark:text-slate-300"
+                                }`}
+                              >
+                                {day.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                          Step 3: From Date
+                        </label>
+                        <input
+                          type="date"
+                          min={newStart}
+                          max={newEnd}
+                          value={wizardStart}
+                          onChange={(e) => setWizardStart(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white p-2 text-xs font-semibold text-slate-800 focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                          Step 4: To Date
+                        </label>
+                        <input
+                          type="date"
+                          min={newStart}
+                          max={newEnd}
+                          value={wizardEnd}
+                          onChange={(e) => setWizardEnd(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white p-2 text-xs font-semibold text-slate-800 focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 dark:bg-slate-900/40 dark:border-slate-800/50 flex flex-col justify-center">
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 text-center leading-relaxed">
+                        Schedules the chosen team members to <b>{wizardShift} Shifts</b> from <b>{wizardStart ? formatDateString(wizardStart) : "?"}</b> to <b>{wizardEnd ? formatDateString(wizardEnd) : "?"}</b>.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleApplyWizard}
+                      className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 font-extrabold text-xs text-white py-2.5 shadow-md flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    >
+                      ⚡ Execute Plan & Apply Shifts
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* SPREADSHEET-LIKE EDIT GRID HEADER AND SEARCH */}
+          {(() => {
+            const filteredGridEmployees = branchEmployees.filter(emp => {
+              if (!gridSearchTerm) return true;
+              const match = `${emp.first} ${emp.last} ${emp.position} ${emp.dept}`.toLowerCase();
+              return match.includes(gridSearchTerm.toLowerCase());
+            });
+
+            return (
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Spreadsheet Draft Sheet Grid ({filteredGridEmployees.length} personnel shown)
+                  </h4>
+                  <div className="relative w-full sm:w-64">
+                    <input
+                      type="text"
+                      placeholder="🔍 Search draft grid rows..."
+                      value={gridSearchTerm}
+                      onChange={(e) => setGridSearchTerm(e.target.value)}
+                      className="w-full text-xs font-semibold rounded-xl border border-slate-205 bg-white px-3 py-1.5 text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                    />
+                    {gridSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setGridSearchTerm("")}
+                        className="absolute right-2.5 top-2 text-slate-450 hover:text-slate-600 dark:hover:text-slate-200 text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-950">
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                          <th className="p-2 text-[10px] font-black uppercase text-slate-500 dark:text-slate-400 w-52 shrink-0 sticky left-0 bg-slate-50 dark:bg-slate-900 z-10">
+                            Staff Member
+                          </th>
+                          {getDatesInRange(newStart, newEnd).map(d => {
+                            const dayName = new Date(d).toLocaleDateString("en-GB", { weekday: "short" });
+                            return (
+                              <th key={d} className="p-2 text-[10px] font-black uppercase text-slate-500 dark:text-slate-400 text-center min-w-[65px]">
+                                <div>{dayName.toUpperCase()}</div>
+                                <div className="text-[8px] opacity-60 mt-0.5">{formatDateString(d)}</div>
+                              </th>
                             );
                           })}
                         </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-150 dark:divide-slate-900">
+                        {filteredGridEmployees.length === 0 ? (
+                          <tr>
+                            <td colSpan={getDatesInRange(newStart, newEnd).length + 1} className="py-12 text-center text-slate-450 text-xs font-semibold">
+                              No matching employees found in draft workspace.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredGridEmployees.map(emp => {
+                            const empAsg = localAssignments.find(a => a.empId === emp.id);
+                            return (
+                              <tr key={emp.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/40">
+                                <td className="p-2 font-bold text-xs sticky left-0 bg-white dark:bg-slate-950 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                                  <span className="block text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                    {emp.first} {emp.last}
+                                  </span>
+                                  <span className="block text-[9px] text-slate-400 font-medium whitespace-nowrap">
+                                    {emp.position}
+                                  </span>
+                                </td>
+                                {getDatesInRange(newStart, newEnd).map(d => {
+                                  const curShift = empAsg?.shifts[d] || "Off";
+                                  let cellStyle = "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-450";
+                                  let icon = <XCircle className="h-2.5 w-2.5 shrink-0" />;
+
+                                  if (curShift === "Day") {
+                                    cellStyle = "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400 border border-emerald-500/25";
+                                    icon = <Sun className="h-2.5 w-2.5 shrink-0" />;
+                                  } else if (curShift === "Night") {
+                                    cellStyle = "bg-purple-500/10 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400 border border-purple-500/25";
+                                    icon = <Moon className="h-2.5 w-2.5 shrink-0" />;
+                                  }
+
+                                  return (
+                                    <td key={d} className="p-1 text-center align-middle">
+                                      <button
+                                        type="button"
+                                        onClick={() => cycleShift(emp.id, d)}
+                                        className={`w-full flex flex-col items-center justify-center p-1 rounded-lg text-[9px] font-extrabold cursor-pointer transition ${cellStyle}`}
+                                      >
+                                        {icon}
+                                        <span className="mt-0.5 font-mono text-[8px]">{curShift.toUpperCase()}</span>
+                                      </button>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -600,13 +1022,7 @@ export default function Roster({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm(`Remove roster run "${rt.name}"?`)) {
-                              onDeleteRoster(rt.id);
-                              showToast("Roster deleted from registry.", "info");
-                              if (activeRosterId === rt.id) {
-                                setActiveRosterId("");
-                              }
-                            }
+                            setRosterToDelete(rt);
                           }}
                           className={`p-1.5 rounded-lg transition-colors ${
                             activeRosterId === rt.id
@@ -643,7 +1059,7 @@ export default function Roster({
                 <div className="rounded-2xl border border-slate-100 bg-white p-6 dark:border-slate-900 dark:bg-slate-900 shadow-sm space-y-6">
                   
                   {/* Title details & export button bars */}
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-50 pb-4 dark:border-slate-800/60">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-50 pb-4 dark:border-slate-800/60">
                     <div>
                       <div className="inline-flex items-center gap-1 rounded bg-slate-900 px-2 py-0.5 text-[9px] font-bold text-white dark:bg-slate-800 uppercase tracking-widest mb-1">
                         Active Roster Registry
@@ -656,7 +1072,22 @@ export default function Roster({
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setNewName(currentRoster.name);
+                          setNewStart(currentRoster.startDate);
+                          setNewEnd(currentRoster.endDate);
+                          setLocalAssignments(currentRoster.assignments);
+                          setEditingRosterId(currentRoster.id);
+                          setIsCreating(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer dark:bg-indigo-950/40 dark:border-indigo-900 dark:text-indigo-300"
+                        title="Loads this published run back into the workspace builder draft to edit and publish updates"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                        EDIT ROSTER PLAN
+                      </button>
                       <button
                         onClick={handleTriggerPrint}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-250 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700 shadow-sm hover:bg-emerald-100 dark:bg-emerald-950/40 dark:border-emerald-900 dark:text-emerald-350 transition cursor-pointer"
@@ -706,48 +1137,94 @@ export default function Roster({
                     </div>
                   </div>
 
+                  {/* SEARCH SEARCH IN DISPLAY LIST */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+                    <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-550">
+                      Roster Workboard Sheet Grid
+                    </h4>
+                    <div className="relative w-full sm:w-64">
+                      <input
+                        type="text"
+                        placeholder="🔍 Search employees in roster..."
+                        value={gridSearchTerm}
+                        onChange={(e) => setGridSearchTerm(e.target.value)}
+                        className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-slate-800 placeholder-slate-405 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                      />
+                      {gridSearchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setGridSearchTerm("")}
+                          className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* STATIC VIEW SHEET PREVIEW GRID */}
                   <div className="border border-slate-100 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50/50 dark:bg-slate-950/20">
                     <div className="overflow-x-auto">
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800">
-                            <th className="p-3 text-left font-bold text-[10px] uppercase text-slate-400 dark:text-slate-550 w-44 shrink-0">Employee</th>
+                            <th className="p-2.5 text-left font-bold text-[10px] uppercase text-slate-400 dark:text-slate-550 w-44 shrink-0">Employee</th>
                             {getDatesInRange(currentRoster.startDate, currentRoster.endDate).map(d => (
-                              <th key={d} className="p-3 text-center font-bold text-[10px] uppercase text-slate-400 dark:text-slate-550 min-w-[50px]">
+                              <th key={d} className="p-2.5 text-center font-bold text-[10px] uppercase text-slate-400 dark:text-slate-550 min-w-[50px]">
                                 {formatDateString(d)}
                               </th>
                             ))}
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-150 dark:divide-slate-900 text-xs">
-                          {currentRoster.assignments.map(asg => {
-                            const emp = state.employees.find(e => e.id === asg.empId);
-                            if (!emp) return null;
-                            return (
-                              <tr key={asg.empId} className="hover:bg-white dark:hover:bg-slate-900/40">
-                                <td className="p-3 font-semibold text-slate-755 dark:text-slate-200">
-                                  {emp.first} {emp.last}
-                                </td>
-                                {getDatesInRange(currentRoster.startDate, currentRoster.endDate).map(d => {
-                                  const shiftObj = asg.shifts[d] || "Off";
-                                  let cellBg = "bg-slate-100/50 text-slate-400 dark:bg-slate-900/40 dark:text-slate-600";
-                                  if (shiftObj === "Day") {
-                                    cellBg = "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-100/10 dark:text-emerald-450 font-bold";
-                                  } else if (shiftObj === "Night") {
-                                    cellBg = "bg-purple-500/10 text-purple-600 dark:bg-purple-100/10 dark:text-purple-450 font-bold";
-                                  }
-                                  return (
-                                    <td key={d} className="p-2 text-center whitespace-nowrap">
-                                      <span className={`inline-block rounded-lg px-2 py-0.5 text-[10px] tracking-wide font-mono ${cellBg}`}>
-                                        {shiftObj === "Day" ? "☀️ DAY" : shiftObj === "Night" ? "🌙 NIGHT" : "🛌 OFF"}
-                                      </span>
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            );
-                          })}
+                        <tbody className="divide-y divide-slate-150 dark:divide-slate-900 text-xs text-slate-850 dark:text-slate-100">
+                          {(() => {
+                            const filteredStaticAssignments = currentRoster.assignments.filter(asg => {
+                              const emp = state.employees.find(e => e.id === asg.empId);
+                              if (!emp) return false;
+                              if (!gridSearchTerm) return true;
+                              const match = `${emp.first} ${emp.last} ${emp.position} ${emp.dept}`.toLowerCase();
+                              return match.includes(gridSearchTerm.toLowerCase());
+                            });
+
+                            if (filteredStaticAssignments.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={getDatesInRange(currentRoster.startDate, currentRoster.endDate).length + 1} className="p-8 text-center text-slate-400 text-xs">
+                                    No personnel match your search.
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return filteredStaticAssignments.map(asg => {
+                              const emp = state.employees.find(e => e.id === asg.empId);
+                              if (!emp) return null;
+                              return (
+                                <tr key={asg.empId} className="hover:bg-white dark:hover:bg-slate-900/40">
+                                  <td className="p-2.5 font-bold text-slate-700 dark:text-slate-200 text-xs">
+                                    <div className="truncate">{emp.first} {emp.last}</div>
+                                    <div className="text-[9px] text-slate-400 font-medium truncate">{emp.position}</div>
+                                  </td>
+                                  {getDatesInRange(currentRoster.startDate, currentRoster.endDate).map(d => {
+                                    const shiftObj = asg.shifts[d] || "Off";
+                                    let cellBg = "bg-slate-100/50 text-slate-400 dark:bg-slate-900/40 dark:text-slate-600";
+                                    if (shiftObj === "Day") {
+                                      cellBg = "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-100/10 dark:text-emerald-450 font-black";
+                                    } else if (shiftObj === "Night") {
+                                      cellBg = "bg-purple-500/10 text-purple-600 dark:bg-purple-100/10 dark:text-purple-450 font-black";
+                                    }
+                                    return (
+                                      <td key={d} className="p-1.5 text-center whitespace-nowrap">
+                                        <span className={`inline-block rounded-lg px-2 py-0.5 text-[9px] tracking-wide font-mono ${cellBg}`}>
+                                          {shiftObj === "Day" ? "☀️ DAY" : shiftObj === "Night" ? "🌙 NIGHT" : "🛌 OFF"}
+                                        </span>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            });
+                          })()}
                         </tbody>
                       </table>
                     </div>
@@ -880,6 +1357,26 @@ export default function Roster({
 
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!rosterToDelete}
+        title="Confirm Roster Deletion"
+        message={`Are you sure you want to permanently delete the shift roster "${rosterToDelete?.name}"?`}
+        type="danger"
+        confirmText="Remove Roster"
+        cancelText="Keep Roster"
+        onConfirm={() => {
+          if (rosterToDelete) {
+            onDeleteRoster(rosterToDelete.id);
+            showToast("Roster deleted from registry.", "info");
+            if (activeRosterId === rosterToDelete.id) {
+              setActiveRosterId("");
+            }
+            setRosterToDelete(null);
+          }
+        }}
+        onCancel={() => setRosterToDelete(null)}
+      />
 
     </div>
   );

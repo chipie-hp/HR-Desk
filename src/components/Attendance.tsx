@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { DatabaseState, AttendanceRecord, AttendanceDatabase, Employee, DeductionApproval, DocumentRecord } from "../types";
 import { calculateOvertimeHours, exportToCSV } from "../utils";
-import { ConfirmModal } from "./Modals";
+import { ConfirmModal, Modal } from "./Modals";
 
 interface AttendanceProps {
   state: DatabaseState;
@@ -48,6 +48,14 @@ export default function Attendance({
   const [deptFilter, setDeptFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Navigation tab for Shift category view (Day, Night, Off, Absentees)
+  const [activeShiftTab, setActiveShiftTab] = useState<"Day" | "Night" | "Off" | "Absentees">("Day");
+
+  // Swap / Exchange Shift controls
+  const [isExchangeOpen, setIsExchangeOpen] = useState(false);
+  const [exchangeEmpId, setExchangeEmpId] = useState("");
+  const [exchangeTargetEmpId, setExchangeTargetEmpId] = useState("");
+
   // Temporary local ledger state before saving
   const [localAttendance, setLocalAttendance] = useState<{ [empId: string]: AttendanceRecord }>({});
 
@@ -56,7 +64,7 @@ export default function Attendance({
   const [currentPenaltyIndex, setCurrentPenaltyIndex] = useState(-1);
   const [penaltyReason, setPenaltyReason] = useState("Excessive absenteeism");
 
-  // Load ledger on date change
+  // Load ledger on date change representing on-duty rosters
   useEffect(() => {
     const existing = state.attendance[date];
     const newLocal: { [empId: string]: AttendanceRecord } = {};
@@ -64,18 +72,34 @@ export default function Attendance({
     state.employees.forEach(emp => {
       if (existing && existing[emp.id]) {
         newLocal[emp.id] = { ...existing[emp.id] };
+        if (!newLocal[emp.id].shift) {
+          newLocal[emp.id].shift = "Day";
+        }
       } else {
-        // Default present status standard shift hours
+        // Fallback or scan active rosters overlapping the date
+        let rosterShift: "Day" | "Night" | "Off" = "Day";
+        const overlappingRosters = (state.roster || []).filter(r => 
+          date >= r.startDate && date <= r.endDate
+        );
+        for (const roster of overlappingRosters) {
+          const assignment = roster.assignments.find(a => a.empId === emp.id);
+          if (assignment && assignment.shifts?.[date]) {
+            rosterShift = assignment.shifts[date];
+            break;
+          }
+        }
+
         newLocal[emp.id] = {
-          status: "Present",
-          inTime: "06:00",
-          outTime: "17:00",
+          status: rosterShift === "Off" ? "Leave" : "Present",
+          inTime: rosterShift === "Night" ? "18:00" : "06:00",
+          outTime: rosterShift === "Night" ? "05:00" : "17:00",
+          shift: rosterShift,
         };
       }
     });
 
     setLocalAttendance(newLocal);
-  }, [date, state.attendance, state.employees]);
+  }, [date, state.attendance, state.employees, state.roster]);
 
   // Dynamic Worked Hours calculator logic (Actual hours between check-in and out, deducting 1 hr lunch if >= 5 hours)
   const calculateWorkedHours = (status: string, inTime: string, outTime: string): number => {
@@ -113,6 +137,85 @@ export default function Attendance({
         autoDeducted: status === "Sick" ? false : prev[empId]?.autoDeducted
       }
     }));
+  };
+
+  const handleShiftChange = (empId: string, newShift: "Day" | "Night" | "Off") => {
+    setLocalAttendance(prev => {
+      const current = prev[empId] || { status: "Present", inTime: "06:00", outTime: "17:00" };
+      // Preset default hours for each shift
+      let defaultIn = current.inTime;
+      let defaultOut = current.outTime;
+      if (newShift === "Night") {
+        defaultIn = "18:00";
+        defaultOut = "05:00";
+      } else if (newShift === "Day") {
+        defaultIn = "06:00";
+        defaultOut = "17:00";
+      } else if (newShift === "Off") {
+        defaultIn = "00:00";
+        defaultOut = "00:00";
+      }
+      return {
+        ...prev,
+        [empId]: {
+          ...current,
+          shift: newShift,
+          inTime: defaultIn,
+          outTime: defaultOut,
+          status: newShift === "Off" ? "Leave" : current.status === "Leave" ? "Present" : current.status
+        }
+      };
+    });
+  };
+
+  const initiateExchange = (empId: string) => {
+    setExchangeEmpId(empId);
+    setExchangeTargetEmpId("");
+    setIsExchangeOpen(true);
+  };
+
+  const handleConfirmExchange = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!exchangeEmpId || !exchangeTargetEmpId) return;
+
+    setLocalAttendance(prev => {
+      const empARec = prev[exchangeEmpId] || { status: "Present", inTime: "06:00", outTime: "17:00", shift: "Day" };
+      const empBRec = prev[exchangeTargetEmpId] || { status: "Present", inTime: "06:00", outTime: "17:00", shift: "Day" };
+
+      const shiftA = empARec.shift || "Day";
+      const shiftB = empBRec.shift || "Day";
+
+      // Swapping values between peer employees
+      const updatedARec = {
+        ...empARec,
+        shift: shiftB,
+        inTime: shiftB === "Night" ? "18:00" : shiftB === "Day" ? "06:00" : "00:00",
+        outTime: shiftB === "Night" ? "05:00" : shiftB === "Day" ? "17:00" : "00:00",
+        status: shiftB === "Off" ? "Leave" : empARec.status === "Leave" ? "Present" : empARec.status
+      };
+
+      const updatedBRec = {
+        ...empBRec,
+        shift: shiftA,
+        inTime: shiftA === "Night" ? "18:00" : shiftA === "Day" ? "06:00" : "00:00",
+        outTime: shiftA === "Night" ? "05:00" : shiftA === "Day" ? "17:00" : "00:00",
+        status: shiftA === "Off" ? "Leave" : empBRec.status === "Leave" ? "Present" : empBRec.status
+      };
+
+      return {
+        ...prev,
+        [exchangeEmpId]: updatedARec,
+        [exchangeTargetEmpId]: updatedBRec
+      };
+    });
+
+    const empA = state.employees.find(e => e.id === exchangeEmpId);
+    const empB = state.employees.find(e => e.id === exchangeTargetEmpId);
+    showToast(`Atomic shift swap confirmed: ${empA?.first || "Staff A"} exchanged with ${empB?.first || "Staff B"}.`, "success");
+
+    setIsExchangeOpen(false);
+    setExchangeEmpId("");
+    setExchangeTargetEmpId("");
   };
 
   const handleTimeChange = (empId: string, field: "inTime" | "outTime", value: string) => {
@@ -510,6 +613,14 @@ export default function Attendance({
 
   const currentAbsenceReportList = getMonthlyAbsencesReport();
 
+  const visibleEmployees = filteredEmployees.filter(emp => {
+    const record = localAttendance[emp.id] || { status: "Present", inTime: "06:00", outTime: "17:00", shift: "Day" };
+    if (activeShiftTab === "Absentees") {
+      return record.status === "Absent";
+    }
+    return (record.shift || "Day") === activeShiftTab;
+  });
+
   return (
     <div className="space-y-8 animate-fade-in">
       
@@ -732,11 +843,56 @@ export default function Attendance({
 
       {/* 3. MAIN ATTENDANCE REGISTER DATA TABLE */}
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        
+        {/* SHIFT-LEVEL NAVIGATION PILLS & TABS */}
+        <div className="flex border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40">
+          {[
+            { id: "Day", label: "☀️ Day Shift", color: "border-amber-500 text-amber-600 dark:text-amber-450" },
+            { id: "Night", label: "🌙 Night Shift", color: "border-indigo-500 text-indigo-600 dark:text-indigo-400" },
+            { id: "Off", label: "🏝️ Off Duty", color: "border-sky-500 text-sky-600 dark:text-sky-400" },
+            { id: "Absentees", label: "🚨 Absentees List", color: "border-rose-500 text-rose-600 dark:text-rose-405" },
+          ].map((tab) => {
+            const isActive = activeShiftTab === tab.id;
+            
+            // Calculate active counts in this status/shift category
+            const count = filteredEmployees.filter(emp => {
+              const record = localAttendance[emp.id] || { status: "Present", shift: "Day" };
+              if (tab.id === "Absentees") {
+                return record.status === "Absent";
+              }
+              return (record.shift || "Day") === tab.id;
+            }).length;
+
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveShiftTab(tab.id as any)}
+                className={`flex-1 py-3 text-xs font-bold text-center border-b-2 transition duration-200 cursor-pointer ${
+                  isActive 
+                    ? `${tab.color} bg-white dark:bg-slate-900 bg-opacity-100` 
+                    : "border-transparent text-slate-400 hover:text-slate-650 hover:border-slate-200 dark:text-slate-500 dark:hover:text-slate-300"
+                }`}
+              >
+                <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                  <span>{tab.label}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                    isActive ? "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-100" : "bg-slate-200/50 text-slate-550 dark:bg-slate-950 dark:text-slate-400"
+                  }`}>
+                    {count}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-900/50">
                 <th className="px-6 py-4">Employee Details</th>
+                <th className="px-6 py-4">Shift & Swap</th>
                 <th className="px-6 py-4">Registry Status</th>
                 <th className="px-6 py-4">Shift In-Time</th>
                 <th className="px-6 py-4">Shift Out-Time</th>
@@ -745,15 +901,15 @@ export default function Attendance({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm dark:divide-slate-800">
-              {filteredEmployees.length === 0 ? (
+              {visibleEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-16 text-center text-slate-400 dark:text-slate-500">
-                    No active personnel matching current filter configurations.
+                  <td colSpan={7} className="py-16 text-center text-slate-400 dark:text-slate-500 font-semibold">
+                    No employees found on {activeShiftTab === "Absentees" ? "Absentees List" : `${activeShiftTab} Shift`} matching matches.
                   </td>
                 </tr>
               ) : (
-                filteredEmployees.map(emp => {
-                  const record = localAttendance[emp.id] || { status: "Present", inTime: "06:00", outTime: "17:00" };
+                visibleEmployees.map(emp => {
+                  const record = localAttendance[emp.id] || { status: "Present", inTime: "06:00", outTime: "17:00", shift: "Day" };
                   
                   // Compute dynamic hours
                   const workedHours = calculateWorkedHours(record.status, record.inTime, record.outTime);
@@ -803,6 +959,35 @@ export default function Attendance({
                               {emp.id} &bull; {emp.branch}
                             </span>
                           </div>
+                        </div>
+                      </td>
+
+                      {/* Active Shift Selection & Swap action */}
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1.5 max-w-[130px]">
+                          <select
+                            value={record.shift || "Day"}
+                            onChange={(e) => handleShiftChange(emp.id, e.target.value as "Day" | "Night" | "Off")}
+                            className={`rounded-xl border px-2 py-1 text-xs font-black focus:outline-none focus:ring-1 focus:ring-indigo-500 transition cursor-pointer ${
+                              record.shift === "Night"
+                                ? "border-indigo-250 bg-indigo-50/70 text-indigo-800 dark:border-indigo-900/40 dark:bg-indigo-950/25 dark:text-indigo-400"
+                                : record.shift === "Off"
+                                ? "border-sky-250 bg-sky-50/70 text-sky-800 dark:border-sky-900/40 dark:dark:bg-sky-950/25 dark:text-sky-400"
+                                : "border-amber-250 bg-amber-50/70 text-amber-805 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-400"
+                            }`}
+                          >
+                            <option value="Day">☀️ Day Shift</option>
+                            <option value="Night">🌙 Night Shift</option>
+                            <option value="Off">🏝️ Off Duty</option>
+                          </select>
+                          
+                          <button
+                            type="button"
+                            onClick={() => initiateExchange(emp.id)}
+                            className="inline-flex items-center justify-center gap-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-[10px] font-black text-indigo-700 py-1.5 border border-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30 dark:text-indigo-400 transition cursor-pointer"
+                          >
+                            ⇄ Swap Roster
+                          </button>
                         </div>
                       </td>
 
@@ -955,20 +1140,20 @@ export default function Attendance({
               
               const riskMeta = {
                 Critical: {
-                  bg: "bg-rose-50 border-rose-100 dark:bg-rose-950/15 dark:border-rose-950/10",
-                  text: "text-rose-600 dark:text-rose-450",
+                  bg: "bg-rose-50 border-rose-100 dark:bg-rose-950/40 dark:border-rose-950/40",
+                  text: "text-rose-600 dark:text-rose-400",
                   badge: "bg-rose-500 text-white",
                   label: "Penalty Threshold Triggered"
                 },
                 High: {
-                  bg: "bg-amber-50 border-amber-100 dark:bg-amber-950/10 dark:border-amber-950/10",
-                  text: "text-amber-600 dark:text-amber-500",
+                  bg: "bg-amber-50 border-amber-100 dark:bg-amber-950/30 dark:border-amber-950/30",
+                  text: "text-amber-600 dark:text-amber-400",
                   badge: "bg-amber-500 text-white",
                   label: "High Risk of Sanction"
                 },
                 Normal: {
-                  bg: "bg-slate-50 border-slate-100 dark:bg-slate-850/30 dark:border-slate-850/20",
-                  text: "text-slate-500 dark:text-slate-400",
+                  bg: "bg-slate-50 border-slate-100 dark:bg-slate-900 dark:border-slate-800",
+                  text: "text-slate-600 dark:text-slate-400",
                   badge: "bg-slate-500 text-white",
                   label: "Compliance Monitored"
                 }
@@ -1002,17 +1187,17 @@ export default function Attendance({
 
                   <div className="space-y-1.5 border-t border-slate-100/30 dark:border-slate-800/20 pt-3">
                     <div className="flex justify-between text-[11px] font-bold">
-                      <span className="text-slate-500">Month Absences:</span>
+                      <span className="text-slate-500 dark:text-slate-400">Month Absences:</span>
                       <span className={riskMeta.text}>{absences} days absent</span>
                     </div>
 
                     <div className="flex justify-between text-[11px] font-bold">
-                      <span className="text-slate-500">Statutory Status:</span>
-                      <span>{riskMeta.label}</span>
+                      <span className="text-slate-500 dark:text-slate-400">Statutory Status:</span>
+                      <span className={`${riskMeta.text} font-extrabold`}>{riskMeta.label}</span>
                     </div>
 
                     <div className="flex justify-between text-[11px] font-bold border-t border-slate-101/10 pt-1.5 mt-1.5">
-                      <span className="text-slate-550">Penalized this month:</span>
+                      <span className="text-slate-600 dark:text-slate-400">Penalized this month:</span>
                       {penalized ? (
                         <span className="text-rose-500 dark:text-rose-400">
                           Applied (MWK {penalizedAmount.toLocaleString()})
@@ -1044,6 +1229,96 @@ export default function Attendance({
           cancelText="Bypass Action"
         />
       )}
+
+      {/* 6. SHIFT SWAP / ROSTER EXCHANGE DIALOG */}
+      <Modal
+        isOpen={isExchangeOpen}
+        onClose={() => {
+          setIsExchangeOpen(false);
+          setExchangeEmpId("");
+          setExchangeTargetEmpId("");
+        }}
+        title="Exchange Shift & Swap Assignments"
+        subtitle="Swap the shift, check-in schedules, and calendar status between two employees atomically."
+        maxWidthClass="max-w-md"
+      >
+        {(() => {
+          const mainEmp = exchangeEmpId ? state.employees.find(e => e.id === exchangeEmpId) : null;
+          const mainRec = exchangeEmpId ? localAttendance[exchangeEmpId] : null;
+          const currentShiftLabel = mainRec?.shift || "Day";
+
+          // Peer employees available to swap with
+          const peerEmployees = state.employees.filter(e => e.id !== exchangeEmpId && !e.isTerminated);
+
+          return (
+            <form onSubmit={handleConfirmExchange} className="space-y-4">
+              {mainEmp && (
+                <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100/50 dark:bg-indigo-950/20 dark:border-indigo-900/30">
+                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Originating Peer</p>
+                  <div className="flex items-center gap-3 mt-1.5">
+                    <img src={mainEmp.photo} alt={mainEmp.first} referrerPolicy="no-referrer" className="h-9 w-9 rounded-full object-cover" />
+                    <div>
+                      <h4 className="font-bold text-slate-850 dark:text-white leading-tight">
+                        {mainEmp.first} {mainEmp.last}
+                      </h4>
+                      <p className="text-[10px] text-slate-450 mt-0.5">
+                        Currently: <strong className="text-indigo-600 dark:text-indigo-400 font-extrabold uppercase">{currentShiftLabel} Shift</strong>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wide dark:text-slate-350 mb-1">
+                  Exchange Assignments With Peer:
+                </label>
+                <select
+                  required
+                  value={exchangeTargetEmpId}
+                  onChange={(e) => setExchangeTargetEmpId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100 focus:ring-1 focus:ring-indigo-505 cursor-pointer"
+                >
+                  <option value="">Select teammate to swap shifts with...</option>
+                  {peerEmployees.map(peer => {
+                    const peerRec = localAttendance[peer.id] || { shift: "Day" };
+                    const peerShift = peerRec.shift || "Day";
+                    return (
+                      <option key={peer.id} value={peer.id}>
+                        {peer.first} {peer.last} (Shift: {peerShift} &bull; ID: {peer.id})
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="text-[10px] text-indigo-400/95 dark:text-indigo-350 mt-2 font-medium">
+                  &bull; Confirming this action will automatically swap their on-duty status, calendar shift designations, and default hours.
+                </p>
+              </div>
+
+              <div className="flex gap-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsExchangeOpen(false);
+                    setExchangeEmpId("");
+                    setExchangeTargetEmpId("");
+                  }}
+                  className="w-1/2 rounded-xl border border-slate-200 px-4 py-2 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 text-xs font-bold transition text-slate-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!exchangeTargetEmpId}
+                  className="w-1/2 rounded-xl bg-indigo-600 transition hover:bg-indigo-700 disabled:opacity-40 py-2.5 text-xs font-bold text-white shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  Confirm Shift Swap
+                </button>
+              </div>
+            </form>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }

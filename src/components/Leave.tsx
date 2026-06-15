@@ -221,22 +221,22 @@ export default function Leave({
           <div className="p-6 border-t border-slate-100 dark:border-slate-800/80 space-y-6">
             {/* Rule card explaining calculations */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="rounded-xl bg-slate-50 border border-slate-150 p-4 dark:bg-slate-910 dark:border-slate-800 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-450">
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
                   <Clock className="h-3.5 w-3.5 text-emerald-500" />
                   Exchange standard
                 </div>
                 <p className="text-lg font-black font-mono text-slate-800 dark:text-white">8 OT Hours = 1 Day</p>
-                <p className="text-[11px] text-slate-505 dark:text-slate-400">Standard legal conversion formula for holiday comp.</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Standard legal conversion formula for holiday comp.</p>
               </div>
 
-              <div className="rounded-xl bg-slate-50 border border-slate-150 p-4 dark:bg-slate-910 dark:border-slate-800 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-450">
-                  <Coins className="h-3.5 w-3.5 text-emerald-505" />
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-slate-400">
+                  <Coins className="h-3.5 w-3.5 text-emerald-500" />
                   Benefits
                 </div>
                 <p className="text-lg font-black font-mono text-slate-800 dark:text-white">No salary reduction</p>
-                <p className="text-[11px] text-slate-505 dark:text-slate-400">Toggles teammate annual holiday allowance dynamically.</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Toggles teammate annual holiday allowance dynamically.</p>
               </div>
 
               <div className="rounded-xl bg-emerald-500/5 border border-emerald-100/80 p-4 dark:border-emerald-950/20 space-y-1.5">
@@ -257,10 +257,10 @@ export default function Leave({
 
             {/* Overtime Ledger */}
             <div className="space-y-2">
-              <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-450">
+              <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-400">
                 Staff Overtime Balance Sheets
               </h5>
-              <div className="overflow-hidden rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-910/20">
+              <div className="overflow-hidden rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-900/20">
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-left text-xs">
                     <thead>
@@ -478,14 +478,14 @@ export default function Leave({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-550 uppercase mb-1">
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                 Days to Deduct
               </label>
               <input
                 type="number"
                 readOnly
                 value={calculatedDays}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-mono text-slate-500 dark:bg-slate-910 dark:border-slate-800 dark:text-slate-400"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-mono text-slate-500 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-400"
               />
             </div>
             <div>

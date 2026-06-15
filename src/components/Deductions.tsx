@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Trash2, Coins, Download, Calendar, ShieldAlert, AlertTriangle, FileWarning } from "lucide-react";
 import { DatabaseState, DeductionApproval } from "../types";
-import { Modal } from "./Modals";
+import { Modal, ConfirmModal } from "./Modals";
 import { exportToCSV } from "../utils";
 
 interface DeductionsProps {
@@ -25,6 +25,7 @@ export default function Deductions({
   showToast,
 }: DeductionsProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [deductionToDelete, setDeductionToDelete] = useState<DeductionApproval | null>(null);
 
   // Form states
   const [selectedEmpIds, setSelectedEmpIds] = useState<string[]>([]);
@@ -274,10 +275,7 @@ export default function Deductions({
                       <td className="px-6 py-4 text-center">
                         <button
                           onClick={() => {
-                            if (confirm(`Revoke negligence deduction charge of ${d.amount.toLocaleString()} MWK for this employee?`)) {
-                              onDeleteDeduction(d.id);
-                              showToast("Incident payroll charge successfully revoked.", "info");
-                            }
+                            setDeductionToDelete(d);
                           }}
                           className="rounded-xl border border-slate-100 p-2 text-rose-500 hover:bg-rose-50 dark:border-slate-800 dark:hover:bg-rose-950/30 transition shadow-sm"
                           title="Revoke Charge"
@@ -541,6 +539,23 @@ export default function Deductions({
           </div>
         </form>
       </Modal>
+
+      <ConfirmModal
+        isOpen={!!deductionToDelete}
+        title="Confirm Deduction Revocation"
+        message={`Are you sure you want to revoke the negligence deduction charge of ${deductionToDelete?.amount?.toLocaleString()} MWK for this employee?`}
+        type="warning"
+        confirmText="Revoke Charge"
+        cancelText="Cancel"
+        onConfirm={() => {
+          if (deductionToDelete) {
+            onDeleteDeduction(deductionToDelete.id);
+            showToast("Incident payroll charge successfully revoked.", "info");
+            setDeductionToDelete(null);
+          }
+        }}
+        onCancel={() => setDeductionToDelete(null)}
+      />
     </div>
   );
 }

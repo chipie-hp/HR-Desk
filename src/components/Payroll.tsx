@@ -530,6 +530,13 @@ export default function Payroll({
         .filter(p => p.empId === emp.id && p.date.startsWith(activeMonth))
         .reduce((sum, p) => sum + p.amount, 0);
 
+      // Automated Suspension deductions
+      const suspensionSum = (state.disciplinary || [])
+        .filter(d => d.empId === emp.id && d.isSuspension && d.date.startsWith(activeMonth))
+        .reduce((sum, d) => sum + (d.suspensionDeduction || 0), 0);
+
+      const combinedPenalties = penaltiesSum + suspensionSum;
+
       // Calculate taxes & net remittance
       const base = emp.salary;
 
@@ -537,7 +544,7 @@ export default function Payroll({
       const paye = Math.round(base * (state.config.paye / 100));
       const pension = Math.round(base * (state.config.pension / 100));
 
-      const totalDeductions = monthLoans + monthAdvances + absentDeduction + penaltiesSum;
+      const totalDeductions = monthLoans + monthAdvances + absentDeduction + combinedPenalties;
       const net = base - paye - pension - totalDeductions;
 
       return {
@@ -550,7 +557,7 @@ export default function Payroll({
         advances: monthAdvances,
         absences,
         absentDeduction,
-        penalties: penaltiesSum,
+        penalties: combinedPenalties,
         net: net > 0 ? net : 0,
       };
     });
@@ -785,26 +792,50 @@ export default function Payroll({
                         </td>
                       </tr>
                     )}
-                    {(() => {
+                     {(() => {
                       const activeMonth = new Date().toISOString().slice(0, 7);
                       const individualDeductions = state.deductionApprovals.filter(
                         d => d.empId === selectedPayslip.id && d.date.startsWith(activeMonth)
                       );
+                      const suspensions = (state.disciplinary || []).filter(
+                        d => d.empId === selectedPayslip.id && d.isSuspension && d.date.startsWith(activeMonth)
+                      );
                       
+                      const rows: React.ReactNode[] = [];
                       if (individualDeductions.length > 0) {
-                        return individualDeductions.map(d => (
-                          <tr key={d.id}>
-                            <td className="py-2">{d.reason || "Negligence Penalty Deduction"}</td>
-                            <td className="text-right text-slate-400">-</td>
-                            <td className="text-right text-rose-600 dark:text-rose-450 font-bold font-mono">
-                              {d.amount.toLocaleString()}.00
-                            </td>
-                          </tr>
-                        ));
+                        individualDeductions.forEach(d => {
+                          rows.push(
+                            <tr key={d.id}>
+                              <td className="py-2">{d.reason || "Negligence Penalty Deduction"}</td>
+                              <td className="text-right text-slate-400">-</td>
+                              <td className="text-right text-rose-600 dark:text-rose-450 font-bold font-mono">
+                                {d.amount.toLocaleString()}.00
+                              </td>
+                            </tr>
+                          );
+                        });
+                      }
+                      if (suspensions.length > 0) {
+                        suspensions.forEach(s => {
+                          rows.push(
+                            <tr key={`disp-susp-${s.id}`}>
+                              <td className="py-2 text-rose-700 dark:text-rose-450 font-semibold">
+                                Corporate Suspension ({s.suspensionDays} Days: {s.suspensionStart} to {s.suspensionEnd})
+                              </td>
+                              <td className="text-right text-slate-400">-</td>
+                              <td className="text-right text-rose-600 dark:text-rose-450 font-bold font-mono">
+                                {(s.suspensionDeduction || 0).toLocaleString()}.00
+                              </td>
+                            </tr>
+                          );
+                        });
+                      }
+                      if (rows.length > 0) {
+                        return <>{rows}</>;
                       } else if (selectedPayslip.penalties > 0) {
                         return (
                           <tr>
-                            <td className="py-2">Excessive absence deduction penalties (5% rule)</td>
+                            <td className="py-2">Excessive absence deduction penalties</td>
                             <td className="text-right text-slate-400">-</td>
                             <td className="text-right text-rose-600 dark:text-rose-450 font-bold font-mono">
                               {selectedPayslip.penalties.toLocaleString()}.00

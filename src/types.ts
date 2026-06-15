@@ -30,6 +30,7 @@ export interface AttendanceRecord {
   sickSelectedAt?: string; // ISO string when first marked Sick
   autoDeducted?: boolean; // Set to true if converted to Absent due to lack of medical proof
   note?: string; // Custom notes for other types
+  shift?: "Day" | "Night" | "Off";
 }
 
 export interface DayAttendance {
@@ -72,6 +73,11 @@ export interface DisciplinaryRecord {
   desc: string;
   action: string;
   date: string;
+  isSuspension?: boolean;
+  suspensionStart?: string;
+  suspensionEnd?: string;
+  suspensionDays?: number;
+  suspensionDeduction?: number;
 }
 
 export interface DocumentRecord {

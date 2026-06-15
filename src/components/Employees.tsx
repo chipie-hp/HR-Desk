@@ -104,6 +104,32 @@ export default function Employees({
   const [termDate, setTermDate] = useState(new Date().toISOString().split("T")[0]);
   const [termNotes, setTermNotes] = useState("");
 
+  // Contract Renewal states
+  const [isRenewOpen, setIsRenewOpen] = useState(false);
+  const [renewEmpId, setRenewEmpId] = useState<string>("");
+  const [renewStartDate, setRenewStartDate] = useState(new Date().toISOString().split("T")[0]);
+  const [renewEndDate, setRenewEndDate] = useState("");
+  const [renewSalaryValue, setRenewSalaryValue] = useState(0);
+
+  useEffect(() => {
+    if (renewEmpId) {
+      const emp = state.employees.find(e => e.id === renewEmpId);
+      if (emp) {
+        setRenewSalaryValue(emp.salary);
+        // Default new contract end date to 1 year after current end date (or 1 year from today if current end is lapsed)
+        const currentEnd = new Date(emp.cend);
+        const today = new Date();
+        const baseDate = isNaN(currentEnd.getTime()) || currentEnd < today ? today : currentEnd;
+        const newEnd = new Date(baseDate);
+        newEnd.setFullYear(newEnd.getFullYear() + 1);
+        setRenewEndDate(newEnd.toISOString().split("T")[0]);
+        // Default start date of renewal to today or current expiry base
+        const newStart = new Date(baseDate);
+        setRenewStartDate(newStart.toISOString().split("T")[0]);
+      }
+    }
+  }, [renewEmpId, state.employees]);
+
   // Modals state
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isBatchOpen, setIsBatchOpen] = useState(false);
@@ -657,6 +683,35 @@ export default function Employees({
     setIsTerminateOpen(false);
   };
 
+  const handleRenewSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renewEmpId || !renewStartDate || !renewEndDate) return;
+
+    onUpdateEmployee(renewEmpId, {
+      cstart: renewStartDate,
+      cend: renewEndDate,
+      salary: renewSalaryValue,
+      isTerminated: false,
+    });
+
+    // Sync active profile view details instantly
+    if (profileEmployee && profileEmployee.id === renewEmpId) {
+      setProfileEmployee(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          cstart: renewStartDate,
+          cend: renewEndDate,
+          salary: renewSalaryValue,
+          isTerminated: false,
+        };
+      });
+    }
+
+    setIsRenewOpen(false);
+    setRenewEmpId("");
+  };
+
   const handleExport = () => {
     const headers = ["ID", "First Name", "Last Name", "Gender", "Branch", "Department", "Position", "Salary (MWK)", "National ID", "Contract Start", "Contract End"];
     const rows = filtered.map(e => [
@@ -1152,7 +1207,7 @@ export default function Employees({
                             className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
                           />
                         </td>
-                        <td className="px-6 py-4.5 font-mono text-xs font-semibold text-slate-550">
+                        <td className="px-6 py-4.5 font-mono text-xs font-semibold text-slate-600 dark:text-slate-400">
                           {emp.id}
                         </td>
                         <td className="px-6 py-4.5">
@@ -1177,7 +1232,7 @@ export default function Employees({
                             {emp.dept}
                           </span>
                         </td>
-                        <td className="px-6 py-4.5 font-semibold text-slate-550 dark:text-slate-400">
+                        <td className="px-6 py-4.5 font-semibold text-slate-700 dark:text-slate-300">
                           {emp.position}
                         </td>
                         <td className="px-6 py-4.5 text-right font-mono font-bold text-slate-900 dark:text-white">
@@ -1324,9 +1379,35 @@ export default function Employees({
                     {emp.isTerminated ? (
                       <span className="text-rose-500 dark:text-rose-400 font-bold">{emp.terminationDate || "N/A"}</span>
                     ) : daysRemaining < 0 ? (
-                      <span className="text-rose-650 font-extrabold">Expired!</span>
+                      <span className="text-rose-600 dark:text-rose-400 font-extrabold flex items-center gap-1.5">
+                        Expired!
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenewEmpId(emp.id);
+                            setIsRenewOpen(true);
+                          }}
+                          className="px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-600 text-[9px] text-white font-black uppercase tracking-wide cursor-pointer transition shadow"
+                        >
+                          Renew
+                        </button>
+                      </span>
                     ) : daysRemaining <= 90 ? (
-                      <span className="text-amber-600 font-extrabold">{daysRemaining} days left</span>
+                      <span className="text-amber-600 dark:text-amber-400 font-extrabold flex items-center gap-1.5">
+                        {daysRemaining} days left
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenewEmpId(emp.id);
+                            setIsRenewOpen(true);
+                          }}
+                          className="px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-600 text-[9px] text-white font-black uppercase tracking-wide cursor-pointer transition shadow"
+                        >
+                          Extend
+                        </button>
+                      </span>
                     ) : (
                       <span className="text-slate-600 dark:text-slate-300 font-bold">{emp.cend}</span>
                     )}
@@ -1710,22 +1791,39 @@ export default function Employees({
                     <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-650 dark:bg-slate-950 dark:text-slate-400">
                       {profileEmployee.dept}
                     </span>
-                    <span className="rounded bg-emerald-50 px-2自动 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+                    <span className="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
                       {profileEmployee.branch}
                     </span>
                   </div>
 
                   {/* Contract alert bar */}
-                  <div className="mt-4 w-full bg-slate-55 rounded-xl p-3 text-xs dark:bg-slate-950/50">
+                  <div className="mt-4 w-full bg-slate-50 rounded-xl p-3 text-xs dark:bg-slate-950/50">
                     <div className="flex justify-between font-semibold">
                       <span className="text-slate-400">Contract Standing</span>
-                      <span className={isExpired ? "text-rose-500" : daysRemaining < 90 ? "text-amber-500" : "text-emerald-500"}>
+                      <span className={isExpired ? "text-rose-500 font-extrabold" : daysRemaining < 90 ? "text-amber-500 font-extrabold" : "text-emerald-500"}>
                         {isExpired ? "Expired" : `${daysRemaining} days left`}
                       </span>
                     </div>
 
-                    <div className="mt-1 text-slate-450 text-[10px] flex items-center gap-1">
-                      <Briefcase className="h-3 w-3" /> Expiry: {profileEmployee.cend}
+                    <div className="mt-1 text-slate-450 text-[10px] flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        <Briefcase className="h-3 w-3" /> Expiry: {profileEmployee.cend}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!isExpired}
+                        onClick={() => {
+                          setRenewEmpId(profileEmployee.id);
+                          setIsRenewOpen(true);
+                        }}
+                        className={`px-2 py-0.5 rounded text-[9px] font-black uppercase shadow-sm transition ${
+                          isExpired 
+                            ? "bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer" 
+                            : "bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-800 dark:text-slate-500"
+                        }`}
+                      >
+                        Renew
+                      </button>
                     </div>
                   </div>
 
@@ -2482,6 +2580,104 @@ export default function Employees({
                 >
                   <XCircle className="h-4 w-4" />
                   Terminate Contract
+                </button>
+              </div>
+            </form>
+          );
+        })()}
+      </Modal>
+
+      {/* MODAL 5: CONTRACT RENEWAL OPTION */}
+      <Modal
+        isOpen={isRenewOpen}
+        onClose={() => {
+          setIsRenewOpen(false);
+          setRenewEmpId("");
+        }}
+        title="Renew Employment Contract Agreement"
+        subtitle="Extend the active period duration and renegotiate individual baseline salaries."
+        maxWidthClass="max-w-md"
+      >
+        {(() => {
+          const targetEmp = renewEmpId ? state.employees.find(e => e.id === renewEmpId) : null;
+          if (!targetEmp) return <p className="text-sm text-slate-500">Please select an employee profile to renew.</p>;
+          return (
+            <form onSubmit={handleRenewSubmit} className="space-y-4">
+              <div className="flex items-center gap-3 bg-emerald-55 bg-emerald-500/5 p-3 rounded-xl border border-emerald-500/10 dark:bg-emerald-950/20 dark:border-emerald-900/30">
+                <img
+                  src={targetEmp.photo || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop`}
+                  alt={targetEmp.first}
+                  referrerPolicy="no-referrer"
+                  className="h-10 w-10 rounded-full object-cover shrink-0"
+                />
+                <div>
+                  <h5 className="font-bold text-slate-800 dark:text-white leading-tight">
+                    {targetEmp.first} {targetEmp.last}
+                  </h5>
+                  <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                    ID: {targetEmp.id} &bull; {targetEmp.branch} &bull; {targetEmp.position}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-750 uppercase tracking-wide dark:text-slate-350 mb-1">
+                    New Renewal Start Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={renewStartDate}
+                    onChange={(e) => setRenewStartDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-750 uppercase tracking-wide dark:text-slate-350 mb-1">
+                    New Expiry Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={renewEndDate}
+                    onChange={(e) => setRenewEndDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-750 uppercase tracking-wide dark:text-slate-350 mb-1">
+                    Adjust Monthly Base Salary (MWK)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    value={renewSalaryValue}
+                    onChange={(e) => setRenewSalaryValue(Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500 font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRenewOpen(false);
+                    setRenewEmpId("");
+                  }}
+                  className="w-1/2 rounded-xl border border-slate-200 px-4 py-2 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 text-xs font-bold transition text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="w-1/2 rounded-xl bg-emerald-500 transition hover:bg-emerald-600 py-2 text-xs font-bold text-white shadow-md flex items-center justify-center gap-1.5"
+                >
+                  Confirm Renewal
                 </button>
               </div>
             </form>

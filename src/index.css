@@ -4,11 +4,61 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Custom high-contrast layout colors parsed across the app */
+  --color-slate-101: #fafafa;
+  --color-slate-150: #e2e8f0;
+  --color-slate-205: #cbd5e1;
+  --color-slate-250: #cbd5e1;
+  --color-slate-350: #94a3b8;
+  --color-slate-450: #64748b;
+  --color-slate-505: #475569;
+  --color-slate-550: #64748b;
+  --color-slate-650: #475569;
+  --color-slate-655: #475569;
+  --color-slate-705: #334155;
+  --color-slate-707: #334155;
+  --color-slate-750: #1e293b;
+  --color-slate-755: #1e293b;
+  --color-slate-805: #0f172a;
+  --color-slate-850: #1e293b; /* Good dark contrast color for dark mode container elements */
+  --color-slate-855: #1e293b;
+  --color-slate-905: #0f172a;
+  --color-slate-910: #0f172a;
+  --color-slate-955: #020617;
+
+  /* Custom Emerald definitions used in badges and states */
+  --color-emerald-350: #34d399;
+  --color-emerald-450: #10b981;
+  --color-emerald-550: #059669;
+  --color-emerald-850: #064e3b;
 }
 
 @layer base {
   body {
     @apply antialiased font-sans bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100;
+  }
+  
+  /* Prevent low opacity in input elements globally */
+  input, select, textarea {
+    opacity: 1 !important; /* Always enforce 100% typography opacity */
+  }
+
+  /* Enforce clear contrast for select list dropdown option tags in both light and dark modes */
+  select option {
+    background-color: #1e293b !important;
+    color: #fafafa !important;
+  }
+  html:not(.dark) select option,
+  body:not(.dark) select option {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+  
+  /* Replace blinding white highlights when selecting text inside inputs with a smooth indigo tone */
+  input::selection, textarea::selection {
+    background-color: rgba(99, 102, 241, 0.25) !important;
+    color: inherit !important;
   }
 }
 
