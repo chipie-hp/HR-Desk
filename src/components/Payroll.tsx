@@ -228,278 +228,6 @@ export default function Payroll({
     showToast("Certified PDF payslip downloaded successfully!", "success");
   };
 
-  const handleDownloadOfflinePayslip = (p: PayrollRecord) => {
-    const activeEmp = state.employees.find(e => e.id === p.id);
-    const dateStr = new Date().toISOString().slice(0, 7);
-    const individualDeductions = state.deductionApprovals.filter(
-      d => d.empId === p.id && d.date.startsWith(dateStr)
-    );
-
-    const deductionRows = individualDeductions.length > 0 
-      ? individualDeductions.map(d => `
-        <tr>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">${d.reason || "Negligence/Penalty Deduction"}</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8; font-size: 13px;">-</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${d.amount.toLocaleString()}.00</td>
-        </tr>
-      `).join("")
-      : "";
-
-    const loanRow = p.loans > 0 ? `
-      <tr>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">Amortization loan repayment fraction</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8; font-size: 13px;">-</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.loans.toLocaleString()}.00</td>
-      </tr>
-    ` : "";
-
-    const advanceRow = p.advances > 0 ? `
-      <tr>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">Outstanding Cash Advance Recovery Deduction</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8; font-size: 13px;">-</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.advances.toLocaleString()}.00</td>
-      </tr>
-    ` : "";
-
-    const absentRow = p.absentDeduction > 0 ? `
-      <tr>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">Absenteeism Deduction (${p.absences} Days absent)</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8; font-size: 13px;">-</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.absentDeduction.toLocaleString()}.00</td>
-      </tr>
-    ` : "";
-
-    const payeRow = state.config.paye > 0 ? `
-      <tr>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">PAYE Income progressive tax</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.paye.toLocaleString()}.00</td>
-      </tr>
-    ` : "";
-
-    const pensionRow = state.config.pension > 0 ? `
-      <tr>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">National pension statutory contribution</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #e11d48; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.pension.toLocaleString()}.00</td>
-      </tr>
-    ` : "";
-
-    const htmlContent = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Payslip - ${p.name} - ${dateStr}</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: #f8fafc;
-      margin: 0;
-      padding: 40px;
-      color: #0f172a;
-    }
-    .payslip-card {
-      max-width: 650px;
-      margin: 0 auto;
-      background: white;
-      padding: 40px;
-      border-radius: 16px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-      border: 1px solid #e2e8f0;
-    }
-    .header-section {
-      display: flex;
-      justify-content: space-between;
-      border-bottom: 2px solid #10b981;
-      padding-bottom: 20px;
-      margin-bottom: 20px;
-    }
-    .hotel-title {
-      font-size: 22px;
-      font-weight: 800;
-      color: #064e3b;
-      margin: 0;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .hotel-subtitle {
-      font-size: 11px;
-      color: #64748b;
-      margin: 4px 0 0 0;
-      font-weight: 500;
-    }
-    .status-badge {
-      background-color: #d1fae5;
-      color: #065f46;
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-weight: 800;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .meta-blocks {
-      display: grid;
-      grid-template-cols: 1fr 1fr;
-      gap: 20px;
-      padding-bottom: 20px;
-      border-bottom: 1px dashed #e2e8f0;
-      margin-bottom: 24px;
-    }
-    .meta-item-label {
-      font-size: 9px;
-      text-transform: uppercase;
-      color: #94a3b8;
-      font-weight: 800;
-      letter-spacing: 0.1em;
-      margin-bottom: 4px;
-    }
-    .meta-item-val {
-      font-size: 13px;
-      font-weight: bold;
-      margin: 0;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 30px;
-    }
-    th {
-      border-bottom: 2px solid #cbd5e1;
-      padding-bottom: 10px;
-      color: #475569;
-      text-transform: uppercase;
-      font-size: 10px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-    }
-    td {
-      padding: 10px 0;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .net-container {
-      background-color: #f0fdf4;
-      font-weight: bold;
-    }
-    .net-container td {
-      padding: 16px;
-      border-top: 2px solid #10b981;
-      border-bottom: 2px solid #10b981;
-    }
-    .footer-desc {
-      text-align: center;
-      font-size: 11px;
-      color: #94a3b8;
-      margin-top: 40px;
-    }
-    .action-btn {
-      display: block;
-      width: 100%;
-      max-width: 220px;
-      margin: 20px auto 0 auto;
-      background-color: #10b981;
-      color: white;
-      border: none;
-      padding: 12px 24px;
-      font-size: 14px;
-      font-weight: bold;
-      border-radius: 8px;
-      cursor: pointer;
-      text-align: center;
-      transition: background-color 0.2s;
-    }
-    .action-btn:hover {
-      background-color: #059669;
-    }
-    @media print {
-      body {
-        background: white;
-        padding: 0;
-      }
-      .payslip-card {
-        box-shadow: none;
-        border: none;
-        padding: 0;
-      }
-      .action-btn {
-        display: none;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="payslip-card">
-    <div class="header-section">
-      <div>
-        <h1 class="hotel-title">HR Desk operations</h1>
-        <p class="hotel-subtitle">Official Corporate Pay Remittance Advice</p>
-      </div>
-      <div style="text-align: right;">
-        <span class="status-badge">Liquidation Finalized</span>
-        <div style="font-family: monospace; font-size: 10px; color: #64748b; margin-top: 8px;">Month: ${dateStr}</div>
-      </div>
-    </div>
-    
-    <div class="meta-blocks">
-      <div>
-        <div class="meta-item-label">Employee Details</div>
-        <p class="meta-item-val">${p.name}</p>
-        <p style="margin: 4px 0 0 0; font-size: 11px; color: #64748b;">Ref ID: ${p.id}</p>
-      </div>
-      <div>
-        <div class="meta-item-label">Job Assignment Coordinates</div>
-        <p class="meta-item-val" style="font-weight: 500; color: #334155;">
-          Position: ${activeEmp ? activeEmp.position : "Corporate Agent"}<br>
-          Branch: ${activeEmp ? activeEmp.branch : "Main Regional Branch"}
-        </p>
-      </div>
-    </div>
-
-    <table>
-      <thead>
-        <tr>
-          <th style="text-align: left;">Description Part</th>
-          <th style="text-align: right;">Earnings (MWK)</th>
-          <th style="text-align: right;">Deductions (MWK)</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: left; font-size: 13px;">Basic monthly salary base</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; font-family: monospace; font-size: 13px;">MWK ${p.base.toLocaleString()}.00</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">-</td>
-        </tr>
-        ${payeRow}
-        ${pensionRow}
-        ${absentRow}
-        ${advanceRow}
-        ${loanRow}
-        ${deductionRows}
-        <tr class="net-container">
-          <td style="text-align: left; color: #064e3b; text-transform: uppercase; font-size: 13px;">Net Remittance Outflow Sum</td>
-          <td colspan="2" style="text-align: right; color: #047857; font-family: monospace; font-size: 16px; font-weight: 800;">MWK ${p.net.toLocaleString()}.00</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <button class="action-btn" onclick="window.print()">Print This Payslip</button>
-    <div class="footer-desc">
-      <p>This is a certified system-generated payslip remittance advice document.</p>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const blob = new Blob([htmlContent], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `Payslip_${p.name.replace(/\s+/g, "_")}_${dateStr}.html`;
-    link.click();
-    URL.revokeObjectURL(url);
-    showToast("Certified standalone payslip downloaded successfully!", "success");
-  };
-
   const handleRunPayroll = () => {
     const activeMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
@@ -562,8 +290,17 @@ export default function Payroll({
       };
     });
 
-    onRunPayroll(records);
-    showToast(`Calculated ledger for ${records.length} production members.`, "success");
+    // Sort records so employees with deductions appear first (highest deductions first)
+    const sortedRecords = [...records].sort((a, b) => {
+      const aDeds = a.loans + a.advances + a.absentDeduction + a.penalties;
+      const bDeds = b.loans + b.advances + b.absentDeduction + b.penalties;
+      if (aDeds > 0 && bDeds === 0) return -1;
+      if (bDeds > 0 && aDeds === 0) return 1;
+      return bDeds - aDeds;
+    });
+
+    onRunPayroll(sortedRecords);
+    showToast(`Calculated ledger for ${sortedRecords.length} production members.`, "success");
   };
 
   const handleExport = () => {
@@ -625,8 +362,8 @@ export default function Payroll({
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-550 dark:border-slate-800 dark:bg-slate-900/50">
                 <th className="px-6 py-4">Employee</th>
+                <th className="px-6 py-4 text-right text-rose-600 dark:text-rose-450 font-black">Acquired Deductions (MWK)</th>
                 <th className="px-6 py-4 text-right">Base Salary (MWK)</th>
-                <th className="px-6 py-4 text-right">Acquired Deductions</th>
                 <th className="px-6 py-4 text-right">PAYE progressive tax</th>
                 <th className="px-6 py-4 text-right">Pension contribution</th>
                 <th className="px-6 py-4 text-right">Net Liquidation Pay</th>
@@ -642,39 +379,47 @@ export default function Payroll({
                   </td>
                 </tr>
               ) : (
-                state.payroll.map(p => (
-                  <tr key={p.id} className="hover:bg-slate-50/25 dark:hover:bg-slate-800/10 transition pb-2">
-                    <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">
-                      {p.name}
-                      <span className="block font-mono text-[9px] font-semibold text-slate-400 leading-none mt-1">
-                        ID: {p.id}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-300">
-                      {p.base.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-right font-mono text-rose-600 dark:text-rose-400">
-                      -{(p.loans + p.advances + p.absentDeduction + p.penalties).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-300">
-                      {p.paye.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-300">
-                      {p.pension.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-right font-mono font-extrabold text-slate-900 dark:text-white">
-                      {p.net.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={() => setSelectedPayslip(p)}
-                        className="rounded-xl bg-slate-55 border border-slate-150 p-2 hover:bg-slate-100 dark:hover:bg-slate-800 dark:border-slate-800 text-slate-500 dark:text-slate-400 transition"
-                      >
-                        <Receipt className="h-4.5 w-4.5 text-emerald-600" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                [...state.payroll]
+                  .sort((a, b) => {
+                    const aDeds = a.loans + a.advances + a.absentDeduction + a.penalties;
+                    const bDeds = b.loans + b.advances + b.absentDeduction + b.penalties;
+                    if (aDeds > 0 && bDeds === 0) return -1;
+                    if (bDeds > 0 && aDeds === 0) return 1;
+                    return bDeds - aDeds;
+                  })
+                  .map(p => (
+                    <tr key={p.id} className="hover:bg-slate-50/25 dark:hover:bg-slate-800/10 transition pb-2">
+                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">
+                        {p.name}
+                        <span className="block font-mono text-[9px] font-semibold text-slate-400 leading-none mt-1">
+                          ID: {p.id}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right font-mono text-rose-600 dark:text-rose-400 font-bold">
+                        -{(p.loans + p.advances + p.absentDeduction + p.penalties).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-300">
+                        {p.base.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-300">
+                        {p.paye.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-300">
+                        {p.pension.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 text-right font-mono font-extrabold text-slate-900 dark:text-white">
+                        {p.net.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          onClick={() => setSelectedPayslip(p)}
+                          className="rounded-xl bg-slate-55 border border-slate-150 p-2 hover:bg-slate-100 dark:hover:bg-slate-800 dark:border-slate-800 text-slate-500 dark:text-slate-400 transition"
+                        >
+                          <Receipt className="h-4.5 w-4.5 text-emerald-600" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
               )}
             </tbody>
           </table>
@@ -866,14 +611,6 @@ export default function Payroll({
                 className="flex-1 min-w-[120px] rounded-xl border border-slate-200 px-4 py-2 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 text-sm font-bold transition"
               >
                 Dismiss
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDownloadOfflinePayslip(selectedPayslip)}
-                className="flex-1 min-w-[130px] rounded-xl border border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 py-2 px-3 text-sm font-bold transition inline-flex items-center justify-center gap-1"
-              >
-                <Download className="h-4 w-4 text-emerald-500" />
-                HTML Standalone
               </button>
               <button
                 type="button"
