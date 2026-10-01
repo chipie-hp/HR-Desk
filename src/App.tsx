@@ -28,7 +28,9 @@ import {
   FileCheck2,
   LockKeyhole,
   FileWarning,
-  ChevronRight
+  ChevronRight,
+  Bell,
+  ArrowRightLeft
 } from "lucide-react";
 
 import { 
@@ -45,7 +47,8 @@ import {
   DocumentRecord, 
   PayrollRecord, 
   SystemConfig,
-  RosterEntry
+  RosterEntry,
+  EmployeeTransfer
 } from "./types";
 
 import { loadDatabase, saveDatabase, INITIAL_STATE, getAvatarUrl } from "./utils";
@@ -84,6 +87,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [targetDossierTab, setTargetDossierTab] = useState<"overview" | "financials" | "attendance" | "compliance" | undefined>(undefined);
   const [externalProfileEmployeeId, setExternalProfileEmployeeId] = useState<string | undefined>(undefined);
+  const [openTransfersModalDirectly, setOpenTransfersModalDirectly] = useState(false);
 
   // Dynamic system audits logger state
   const [logs, setLogs] = useState<{ time: string; category: string; details: string }[]>([]);
@@ -159,10 +163,20 @@ export default function App() {
       const serialId = `EMP-${(prev.employees.length + 1).toString().padStart(3, "0")}`;
       const completed: Employee = { id: serialId, ...newEmp };
       
+      const cleanPos = newEmp.position?.trim();
+      const updatedPositionSalaries = cleanPos && newEmp.salary > 0 ? {
+        ...(prev.config.positionSalaries || {}),
+        [cleanPos]: newEmp.salary
+      } : (prev.config.positionSalaries || {});
+
       addLogEvent("Staff Registry", `Created baseline profile for ${completed.first} ${completed.last}.`);
       return {
         ...prev,
-        employees: [...prev.employees, completed]
+        employees: [...prev.employees, completed],
+        config: {
+          ...prev.config,
+          positionSalaries: updatedPositionSalaries
+        }
       };
     });
     showToast("Teammate profile created successfully.", "success");
@@ -217,9 +231,21 @@ export default function App() {
       const target = prev.employees.find(e => e.id === id);
       const nameStr = target ? `${target.first} ${target.last}` : id;
       addLogEvent("Staff Registry", `Updated profile information for teammate ${nameStr} (${id}).`);
+
+      const updatedPos = updatedFields.position?.trim() || target?.position?.trim();
+      const updatedSalary = typeof updatedFields.salary === "number" ? updatedFields.salary : target?.salary;
+      const updatedPositionSalaries = updatedPos && updatedSalary && updatedSalary > 0 ? {
+        ...(prev.config.positionSalaries || {}),
+        [updatedPos]: updatedSalary
+      } : (prev.config.positionSalaries || {});
+
       return {
         ...prev,
-        employees: prev.employees.map(e => e.id === id ? { ...e, ...updatedFields } : e)
+        employees: prev.employees.map(e => e.id === id ? { ...e, ...updatedFields } : e),
+        config: {
+          ...prev.config,
+          positionSalaries: updatedPositionSalaries
+        }
       };
     });
     showToast("Employee profile successfully updated.", "success");
@@ -433,6 +459,48 @@ export default function App() {
     });
   };
 
+  // 16.5 EDIT / RENAME BRANCH REGIONAL REGISTRATION
+  const handleEditBranch = (oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || oldName === trimmed) return;
+
+    if (dbState.branches.some(b => b.toLowerCase() === trimmed.toLowerCase() && b !== oldName)) {
+      showToast(`A branch named "${trimmed}" already exists.`, "error");
+      return;
+    }
+
+    updateStateAndPersist(prev => {
+      const updatedBranches = prev.branches.map(b => b === oldName ? trimmed : b);
+      const updatedEmployees = prev.employees.map(emp => 
+        emp.branch === oldName ? { ...emp, branch: trimmed } : emp
+      );
+      const updatedRoster = (prev.roster || []).map(r => 
+        r.branch === oldName ? { ...r, branch: trimmed } : r
+      );
+      const updatedTransfers = (prev.transfers || []).map(t => ({
+        ...t,
+        fromBranch: t.fromBranch === oldName ? trimmed : t.fromBranch,
+        toBranch: t.toBranch === oldName ? trimmed : t.toBranch,
+      }));
+
+      addLogEvent("Configuration Sets", `Renamed branch "${oldName}" to "${trimmed}". Synchronized ${updatedEmployees.filter(e => e.branch === trimmed).length} employees and related records.`);
+
+      return {
+        ...prev,
+        branches: updatedBranches,
+        employees: updatedEmployees,
+        roster: updatedRoster,
+        transfers: updatedTransfers
+      };
+    });
+
+    if (selectedBranch === oldName) {
+      setSelectedBranch(trimmed);
+    }
+
+    showToast(`Branch "${oldName}" renamed to "${trimmed}".`, "success");
+  };
+
   // 17. REMOVE Dynamic custom registers
   const handleRemoveBranch = (name: string) => {
     updateStateAndPersist(prev => {
@@ -491,6 +559,116 @@ export default function App() {
         setTargetDossierTab(undefined);
       }
       setExternalProfileEmployeeId(empId);
+    }
+  };
+
+  // 21. INITIATE INTER-BRANCH TRANSFER (PENDING DESTINATION CONFIRMATION)
+  const handleInitiateTransfer = (transferData: { empId: string; empName: string; fromBranch: string; toBranch: string; notes?: string }) => {
+    updateStateAndPersist(prev => {
+      const nextId = `TR-${((prev.transfers?.length || 0) + 1).toString().padStart(3, "0")}`;
+      const newTransfer: EmployeeTransfer = {
+        id: nextId,
+        empId: transferData.empId,
+        empName: transferData.empName,
+        fromBranch: transferData.fromBranch,
+        toBranch: transferData.toBranch,
+        requestDate: new Date().toISOString(),
+        status: "Pending",
+        notes: transferData.notes || "Inter-branch operational transfer",
+        requestedBy: authRole || "Branch Unit",
+      };
+
+      addLogEvent("Branch Transfers", `Requested inter-branch transfer for ${transferData.empName} from ${transferData.fromBranch} to ${transferData.toBranch}. Awaiting destination branch confirmation.`);
+      return {
+        ...prev,
+        transfers: [...(prev.transfers || []), newTransfer]
+      };
+    });
+    showToast(`Transfer request sent to ${transferData.toBranch}. Awaiting confirmation.`, "info");
+  };
+
+  // 22. CONFIRM INTER-BRANCH TRANSFER
+  const handleConfirmTransfer = (transferId: string) => {
+    let transferredEmpName = "";
+    let destinationBranch = "";
+
+    updateStateAndPersist(prev => {
+      const transfer = (prev.transfers || []).find(t => t.id === transferId);
+      if (!transfer || transfer.status !== "Pending") return prev;
+
+      transferredEmpName = transfer.empName;
+      destinationBranch = transfer.toBranch;
+
+      // Update employee branch assignment
+      const updatedEmployees = prev.employees.map(emp => {
+        if (emp.id === transfer.empId) {
+          return { ...emp, branch: transfer.toBranch };
+        }
+        return emp;
+      });
+
+      // Update transfer status
+      const updatedTransfers = (prev.transfers || []).map(t => {
+        if (t.id === transferId) {
+          return {
+            ...t,
+            status: "Approved" as const,
+            reviewDate: new Date().toISOString(),
+            reviewedBy: authRole || "Branch Administrator"
+          };
+        }
+        return t;
+      });
+
+      addLogEvent("Branch Transfers", `Confirmed and completed transfer for ${transfer.empName} into ${transfer.toBranch}. Teammate added to employee roster.`);
+
+      return {
+        ...prev,
+        employees: updatedEmployees,
+        transfers: updatedTransfers
+      };
+    });
+
+    if (transferredEmpName) {
+      showToast(`${transferredEmpName} successfully transferred and added to ${destinationBranch} employee list!`, "success");
+    }
+  };
+
+  // 23. REJECT / DECLINE INTER-BRANCH TRANSFER
+  const handleRejectTransfer = (transferId: string, reason?: string) => {
+    let transferredEmpName = "";
+    let destinationBranch = "";
+
+    updateStateAndPersist(prev => {
+      const transfer = (prev.transfers || []).find(t => t.id === transferId);
+      if (!transfer || transfer.status !== "Pending") return prev;
+
+      transferredEmpName = transfer.empName;
+      destinationBranch = transfer.toBranch;
+
+      const updatedTransfers = (prev.transfers || []).map(t => {
+        if (t.id === transferId) {
+          return {
+            ...t,
+            status: "Rejected" as const,
+            reviewDate: new Date().toISOString(),
+            reviewedBy: authRole || "Branch Administrator",
+            reviewNotes: reason || "Transfer declined by destination branch management"
+          };
+        }
+        return t;
+      });
+
+      addLogEvent("Branch Transfers", `Declined transfer request for ${transfer.empName} to ${transfer.toBranch}.`);
+
+      return {
+        ...prev,
+        transfers: updatedTransfers
+      };
+    });
+
+    if (transferredEmpName) {
+      showToast(`Transfer request for ${transferredEmpName} to ${destinationBranch} was declined.`, "info");
     }
   };
 
@@ -562,6 +740,9 @@ export default function App() {
       documents: dbState.documents.filter(d => employeeIdsSet.has(d.empId)),
       deductionApprovals: dbState.deductionApprovals.filter(d => employeeIdsSet.has(d.empId)),
       roster: (dbState.roster || []).filter(r => r.branch === selectedBranch),
+      transfers: (dbState.transfers || []).filter(t => 
+        selectedBranch === "all" || t.fromBranch === selectedBranch || t.toBranch === selectedBranch
+      ),
     };
   };
 
@@ -593,6 +774,12 @@ export default function App() {
             onClearExternalProfileEmployeeId={() => setExternalProfileEmployeeId(undefined)}
             isDossierOnly={false}
             selectedBranch={selectedBranch}
+            openTransfersModalDirectly={openTransfersModalDirectly}
+            onClearOpenTransfersModalDirectly={() => setOpenTransfersModalDirectly(false)}
+            onInitiateTransfer={handleInitiateTransfer}
+            onConfirmTransfer={handleConfirmTransfer}
+            onRejectTransfer={handleRejectTransfer}
+            onUpdateConfig={handleUpdateConfig}
           />
         );
       case "attendance":
@@ -688,6 +875,7 @@ export default function App() {
             state={dbState}
             onUpdateConfig={handleUpdateConfig}
             onAddBranch={handleAddBranch}
+            onEditBranch={handleEditBranch}
             onRemoveBranch={handleRemoveBranch}
             onRestoreDatabase={handleRestoreDatabase}
             showToast={showToast}
@@ -729,7 +917,7 @@ export default function App() {
                 <LockKeyhole className="h-8 w-8 text-emerald-500 animate-pulse" />
               </div>
               <h2 className="text-2xl font-black text-white tracking-tight uppercase">
-                HR Desk
+                {dbState.config?.company_name || "HR Desk"}
               </h2>
               <p className="mt-2 text-xs text-slate-400 font-semibold tracking-wider">
                 Sign in to manage operations
@@ -768,7 +956,7 @@ export default function App() {
 
               {authError && (
                 <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3.5 text-xs font-semibold text-rose-400 flex gap-2.5 items-center">
-                  <span>Incorrect key. Please specify system deployment password.</span>
+                  <span>Incorrect password. Please enter valid system credentials.</span>
                 </div>
               )}
 
@@ -895,8 +1083,8 @@ export default function App() {
             <Leaf className="h-5.5 w-5.5 text-emerald-500 animate-pulse" />
           </div>
           <div>
-            <h1 className="text-sm font-black text-white tracking-widest uppercase mb-0.5 leading-none">
-                HR DESK
+            <h1 className="text-sm font-black text-white tracking-widest uppercase mb-0.5 leading-none truncate max-w-[150px]" title={dbState.config?.company_name || "HR DESK"}>
+                {dbState.config?.company_name || "HR DESK"}
             </h1>
             <p className="font-mono text-[9px] font-bold text-slate-500 uppercase leading-none tracking-widest mt-1">
               Active Server node
@@ -960,7 +1148,7 @@ export default function App() {
       <div className="flex-1 flex flex-col md:pl-64 min-w-0 transition-all duration-300">
         
         {/* Dynamic Horizontal header */}
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-100 bg-white/80 dark:bg-slate-950/80 backdrop-blur px-6 py-4 shadow-sm dark:border-slate-900">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-100 bg-white/80 dark:bg-slate-950/80 backdrop-blur px-6 py-4 shadow-sm dark:border-slate-900">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -974,6 +1162,30 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4.5">
+            {/* Pending Transfer Notification Pill */}
+            {(() => {
+              const pendingIncomingTransfers = (dbState.transfers || []).filter(t => 
+                t.status === "Pending" && (selectedBranch === "all" || t.toBranch === selectedBranch)
+              );
+              if (pendingIncomingTransfers.length === 0) return null;
+              return (
+                <button
+                  onClick={() => {
+                    setActiveTab("employees");
+                    setOpenTransfersModalDirectly(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/25 transition cursor-pointer animate-pulse shadow-xs"
+                  title={`${pendingIncomingTransfers.length} pending incoming transfer(s) awaiting confirmation`}
+                >
+                  <Bell className="h-4 w-4" />
+                  <span className="hidden sm:inline">
+                    {pendingIncomingTransfers.length} Transfer{pendingIncomingTransfers.length > 1 ? "s" : ""} to Confirm
+                  </span>
+                  <span className="sm:hidden font-mono text-[11px] font-black">{pendingIncomingTransfers.length}</span>
+                </button>
+              );
+            })()}
+
             {/* Global Branch Selector dropdown */}
             <div className="flex items-center gap-2">
               <span className="hidden lg:inline text-[9px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500">

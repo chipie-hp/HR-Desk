@@ -115,6 +115,23 @@ export interface SystemConfig {
   ot_rate: number; // e.g. 1.5
   daily_absent_deduction: number; // e.g. 5000
   leave_days: number; // e.g. 21
+  company_name?: string; // configured company name
+  positionSalaries?: Record<string, number>; // remembered salary for each position
+}
+
+export interface EmployeeTransfer {
+  id: string;
+  empId: string;
+  empName: string;
+  fromBranch: string;
+  toBranch: string;
+  requestDate: string; // ISO date string
+  status: "Pending" | "Approved" | "Rejected";
+  notes?: string;
+  requestedBy?: string;
+  reviewDate?: string;
+  reviewedBy?: string;
+  reviewNotes?: string;
 }
 
 export interface RosterAssignment {
@@ -144,4 +161,5 @@ export interface DatabaseState {
   config: SystemConfig;
   deductionApprovals: DeductionApproval[];
   roster?: RosterEntry[];
+  transfers?: EmployeeTransfer[];
 }

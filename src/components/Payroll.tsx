@@ -36,7 +36,7 @@ export default function Payroll({
     doc.setProperties({
       title: `Payslip - ${p.name} - ${dateStr}`,
       subject: "Official Salary Remittance Advice",
-      creator: "HR Desk Operations System",
+      creator: `${state.config.company_name || "HR Desk Operations"} System`,
     });
 
     let y = 15;
@@ -50,7 +50,8 @@ export default function Payroll({
     doc.setTextColor(6, 78, 59); // Dark green
     doc.setFont("helvetica", "bold");
     doc.setFontSize(22);
-    doc.text("HR DESK OPERATIONS", 15, y);
+    const companyName = state.config.company_name || "HR DESK OPERATIONS";
+    doc.text(companyName.toUpperCase(), 15, y);
 
     // Right-aligned status badge
     doc.setFillColor(209, 250, 229); // Light green backdrop for badge
@@ -441,7 +442,7 @@ export default function Payroll({
               <div className="flex items-center justify-between border-b pb-4 dark:border-slate-850">
                 <div>
                   <h2 className="text-xl font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
-                    HR Desk operations
+                    {state.config.company_name || "HR Desk operations"}
                   </h2>
                   <p className="text-[10px] font-semibold text-slate-500 mt-0.5">
                     Official Corporate Pay Remittance Advice

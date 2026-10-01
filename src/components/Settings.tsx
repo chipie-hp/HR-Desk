@@ -4,13 +4,14 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Plus, Trash2, Sliders, Database, UploadCloud, ShieldAlert, BadgeInfo } from "lucide-react";
+import { Plus, Trash2, Sliders, Database, UploadCloud, ShieldAlert, BadgeInfo, Pencil, Check, X } from "lucide-react";
 import { DatabaseState, SystemConfig } from "../types";
 
 interface SettingsProps {
   state: DatabaseState;
   onUpdateConfig: (config: SystemConfig) => void;
   onAddBranch: (name: string) => void;
+  onEditBranch?: (oldName: string, newName: string) => void;
   onRemoveBranch: (name: string) => void;
   onRestoreDatabase: (restoredState: DatabaseState) => void;
   showToast: (msg: string, type: "success" | "error" | "info") => void;
@@ -20,15 +21,44 @@ export default function Settings({
   state,
   onUpdateConfig,
   onAddBranch,
+  onEditBranch,
   onRemoveBranch,
   onRestoreDatabase,
   showToast,
 }: SettingsProps) {
   const [newBranch, setNewBranch] = useState("");
+  const [editingBranch, setEditingBranch] = useState<string | null>(null);
+  const [editBranchValue, setEditBranchValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const startEditBranch = (branchName: string) => {
+    setEditingBranch(branchName);
+    setEditBranchValue(branchName);
+  };
+
+  const handleSaveEditBranch = (oldName: string) => {
+    const trimmed = editBranchValue.trim();
+    if (!trimmed) {
+      showToast("Branch name cannot be empty.", "error");
+      return;
+    }
+    if (trimmed === oldName) {
+      setEditingBranch(null);
+      return;
+    }
+    if (state.branches.some(b => b.toLowerCase() === trimmed.toLowerCase() && b !== oldName)) {
+      showToast(`A branch named "${trimmed}" already exists.`, "error");
+      return;
+    }
+    if (onEditBranch) {
+      onEditBranch(oldName, trimmed);
+    }
+    setEditingBranch(null);
+    setEditBranchValue("");
+  };
+
   // Dynamic configuration binds
-  const handleConfigChange = (field: keyof SystemConfig, value: number) => {
+  const handleConfigChange = <K extends keyof SystemConfig>(field: K, value: SystemConfig[K]) => {
     onUpdateConfig({
       ...state.config,
       [field]: value,
@@ -180,8 +210,25 @@ export default function Settings({
         <div className="flex items-center gap-2.5 mb-6">
           <Sliders className="h-5 w-5 text-emerald-600" />
           <h3 className="text-sm font-semibold text-slate-805 uppercase tracking-wider">
-            Corporate tax / statutory parameters
+            Organization & statutory parameters
           </h3>
+        </div>
+
+        {/* Company Name Configuration */}
+        <div className="mb-6 pb-6 border-b border-slate-100 dark:border-slate-800/60">
+          <label className="block text-xs font-bold text-slate-650 uppercase tracking-wider dark:text-slate-350 mb-1.5">
+            Company / Organization Name
+          </label>
+          <input
+            type="text"
+            value={state.config.company_name || ""}
+            placeholder="e.g. HR Desk Operations"
+            onChange={(e) => handleConfigChange("company_name", e.target.value)}
+            className="w-full max-w-md rounded-xl border border-slate-205 py-2 px-3.5 text-sm font-semibold text-slate-800 focus:border-emerald-500 focus:outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-slate-101"
+          />
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            This name will dynamically appear on generated payslips, PDFs, and corporate documents.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -279,20 +326,77 @@ export default function Settings({
           </form>
 
           {/* List existing branches */}
-          <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-52 overflow-y-auto rounded-xl border border-slate-100 dark:border-slate-800">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-56 overflow-y-auto rounded-xl border border-slate-100 dark:border-slate-800">
             {state.branches.map(br => (
               <div key={br} className="flex items-center justify-between py-2.5 px-4 bg-slate-50/50 dark:bg-slate-950/20">
-                <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                  {br}
-                </span>
-                <button
-                  type="button"
-                  disabled={br === "Main Branch"}
-                  onClick={() => onRemoveBranch(br)}
-                  className="rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 disabled:opacity-30 transition"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                {editingBranch === br ? (
+                  <div className="flex items-center gap-2 w-full">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={editBranchValue}
+                      onChange={(e) => setEditBranchValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleSaveEditBranch(br);
+                        } else if (e.key === "Escape") {
+                          setEditingBranch(null);
+                        }
+                      }}
+                      className="flex-1 rounded-lg border border-emerald-500 bg-white dark:bg-slate-900 py-1 px-2.5 text-xs font-bold text-slate-800 dark:text-slate-100 focus:outline-none"
+                      placeholder="Branch name..."
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveEditBranch(br)}
+                      className="rounded-lg p-1.5 bg-emerald-500 text-white hover:bg-emerald-600 transition shrink-0"
+                      title="Save branch name"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingBranch(null)}
+                      className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition shrink-0"
+                      title="Cancel"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-bold text-slate-800 dark:text-slate-200 truncate">
+                        {br}
+                      </span>
+                      {br === "Main Branch" && (
+                        <span className="text-[10px] font-bold text-slate-400 bg-slate-200/60 dark:bg-slate-800 px-1.5 py-0.5 rounded shrink-0">
+                          HQ
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => startEditBranch(br)}
+                        className="rounded-lg p-1 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40 transition"
+                        title={`Edit "${br}" branch name`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={br === "Main Branch"}
+                        onClick={() => onRemoveBranch(br)}
+                        className="rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 disabled:opacity-30 transition"
+                        title="Delete branch"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>

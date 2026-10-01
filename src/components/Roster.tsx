@@ -470,7 +470,7 @@ export default function Roster({
           <div style="margin-top: 100px; display: flex; justify-content: space-between; align-items: flex-end;">
             <div>
               <div style="font-size: 12px; color: #64748b; margin-bottom: 4px;">System printed time: ${new Date().toLocaleString()}</div>
-              <div style="font-size: 10px; color: #94a3b8;">Corporate HR & Command Administration Dashboard</div>
+              <div style="font-size: 10px; color: #94a3b8;">${state.config.company_name || "Corporate HR"} & Command Administration Dashboard</div>
             </div>
             <div class="sign">
               Unit Supervisor Authorization Signature

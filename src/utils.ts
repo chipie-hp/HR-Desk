@@ -11,6 +11,17 @@ export const DEFAULT_CONFIG = {
   ot_rate: 1.5,
   daily_absent_deduction: 5000,
   leave_days: 21,
+  company_name: "HR Desk Operations",
+  positionSalaries: {
+    "Head Chef": 650000,
+    "Chef": 450000,
+    "Porter": 180000,
+    "Waiter": 220000,
+    "Waitress": 220000,
+    "Administrator": 400000,
+    "Finance Lead": 550000,
+    "Human Resources Executive": 520000,
+  },
 };
 
 export function getAvatarUrl(gender: string, name: string): string {
@@ -235,6 +246,7 @@ export const INITIAL_STATE: DatabaseState = {
   config: DEFAULT_CONFIG,
   deductionApprovals: [],
   roster: [],
+  transfers: [],
 };
 
 const STORAGE_KEY = "CCASH_HR_DB_REACT";
@@ -254,7 +266,15 @@ export function loadDatabase(): DatabaseState {
       return {
         ...INITIAL_STATE,
         ...parsed,
-        config: { ...DEFAULT_CONFIG, ...(parsed.config || {}) },
+        transfers: parsed.transfers || [],
+        config: {
+          ...DEFAULT_CONFIG,
+          ...(parsed.config || {}),
+          positionSalaries: {
+            ...DEFAULT_CONFIG.positionSalaries,
+            ...(parsed.config?.positionSalaries || {})
+          }
+        },
       };
     }
   } catch (err) {

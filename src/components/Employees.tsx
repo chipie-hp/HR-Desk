@@ -33,9 +33,14 @@ import {
   XCircle,
   AlertTriangle,
   Printer,
+  ArrowRightLeft,
+  Send,
+  Bell,
+  Sparkles,
+  Building
 } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { Employee, DatabaseState } from "../types";
+import { Employee, DatabaseState, EmployeeTransfer, SystemConfig } from "../types";
 import { Modal } from "./Modals";
 import { exportToCSV, parseCSVInput, capitalizeString, getAvatarUrl } from "../utils";
 
@@ -52,6 +57,12 @@ interface EmployeesProps {
   onClearExternalProfileEmployeeId?: () => void;
   isDossierOnly?: boolean;
   selectedBranch?: string;
+  openTransfersModalDirectly?: boolean;
+  onClearOpenTransfersModalDirectly?: () => void;
+  onInitiateTransfer?: (transfer: { empId: string; empName: string; fromBranch: string; toBranch: string; notes?: string }) => void;
+  onConfirmTransfer?: (transferId: string) => void;
+  onRejectTransfer?: (transferId: string, reason?: string) => void;
+  onUpdateConfig?: (config: SystemConfig) => void;
 }
 
 type TabType = "overview" | "financials" | "attendance" | "compliance";
@@ -84,6 +95,12 @@ export default function Employees({
   onClearExternalProfileEmployeeId,
   isDossierOnly = false,
   selectedBranch = "all",
+  openTransfersModalDirectly,
+  onClearOpenTransfersModalDirectly,
+  onInitiateTransfer,
+  onConfirmTransfer,
+  onRejectTransfer,
+  onUpdateConfig,
 }: EmployeesProps) {
   // Navigation & View layout
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -96,6 +113,17 @@ export default function Employees({
 
   // Selection state
   const [selectedEmpIds, setSelectedEmpIds] = useState<string[]>([]);
+
+  // Inter-branch Transfers state
+  const [isTransfersOpen, setIsTransfersOpen] = useState(false);
+  const [transfersTab, setTransfersTab] = useState<"incoming" | "outgoing" | "history">("incoming");
+  const [isInitiateTransferOpen, setIsInitiateTransferOpen] = useState(false);
+  const [transferTargetEmp, setTransferTargetEmp] = useState<Employee | null>(null);
+  const [transferToBranch, setTransferToBranch] = useState("");
+  const [transferNotes, setTransferNotes] = useState("");
+
+  // Salary auto-fill feedback
+  const [salaryAutoSuggested, setSalaryAutoSuggested] = useState(false);
 
   // Contract Termination states
   const [isTerminateOpen, setIsTerminateOpen] = useState(false);
@@ -110,6 +138,14 @@ export default function Employees({
   const [renewStartDate, setRenewStartDate] = useState(new Date().toISOString().split("T")[0]);
   const [renewEndDate, setRenewEndDate] = useState("");
   const [renewSalaryValue, setRenewSalaryValue] = useState(0);
+
+  useEffect(() => {
+    if (openTransfersModalDirectly) {
+      setTransfersTab("incoming");
+      setIsTransfersOpen(true);
+      onClearOpenTransfersModalDirectly?.();
+    }
+  }, [openTransfersModalDirectly]);
 
   useEffect(() => {
     if (renewEmpId) {
@@ -443,7 +479,7 @@ export default function Employees({
     <div class="header-container">
       <div class="title-block">
         <h1>${emp.first} ${emp.last}</h1>
-        <p>Official Corporate Teammate Dossier & Compliance Records</p>
+        <p>Official ${state.config.company_name || "Corporate"} Teammate Dossier & Compliance Records</p>
       </div>
       <div class="badge-dossier">REF ID: ${emp.id}</div>
     </div>
@@ -598,13 +634,54 @@ export default function Employees({
   const [editCStart, setEditCStart] = useState("");
   const [editCEnd, setEditCEnd] = useState("");
 
-  // Autofill salary helpers based on position averages
+  // Salary auto-remember helper (looks up config map first, then existing employee history)
+  const lookupRememberedSalary = (pos: string): number => {
+    const clean = pos.trim().toLowerCase();
+    if (!clean) return 0;
+
+    // 1. Check config.positionSalaries
+    if (state.config?.positionSalaries) {
+      for (const [k, v] of Object.entries(state.config.positionSalaries)) {
+        if (k.toLowerCase() === clean && typeof v === "number" && v > 0) {
+          return v;
+        }
+      }
+    }
+
+    // 2. Check existing employees with this position
+    const matches = state.employees.filter(e => e.position && e.position.toLowerCase() === clean && e.salary > 0);
+    if (matches.length > 0) {
+      return matches[matches.length - 1].salary;
+    }
+
+    return 0;
+  };
+
   const handlePositionChange = (pos: string) => {
     setNewPosition(pos);
-    const peers = state.employees.filter(e => e.position === pos);
-    if (peers.length > 0) {
-      const average = peers.reduce((sum, e) => sum + e.salary, 0) / peers.length;
-      setNewSalary(Math.round(average));
+    const rem = lookupRememberedSalary(pos);
+    if (rem > 0) {
+      setNewSalary(rem);
+      setSalaryAutoSuggested(true);
+    }
+  };
+
+  const handlePositionCustomChange = (pos: string) => {
+    const val = liveCapitalize(pos);
+    setNewPosition(val);
+    const rem = lookupRememberedSalary(val);
+    if (rem > 0) {
+      setNewSalary(rem);
+      setSalaryAutoSuggested(true);
+    }
+  };
+
+  const handleEditPositionChange = (pos: string) => {
+    const val = liveCapitalize(pos);
+    setEditPosition(val);
+    const rem = lookupRememberedSalary(val);
+    if (rem > 0) {
+      setEditSalary(rem);
     }
   };
 
@@ -631,12 +708,25 @@ export default function Employees({
       photo: getAvatarUrl(newGender, firstClean)
     });
 
+    // Auto-remember salary in config
+    if (positionToUse && Number(newSalary) > 0 && onUpdateConfig) {
+      const posKey = capitalizeString(positionToUse);
+      onUpdateConfig({
+        ...state.config,
+        positionSalaries: {
+          ...(state.config.positionSalaries || {}),
+          [posKey]: Number(newSalary)
+        }
+      });
+    }
+
     // Reset
     setNewFirst("");
     setNewLast("");
     setNewGender("Male");
     setNewPosition("");
     setNewSalary(250000);
+    setSalaryAutoSuggested(false);
     setNewCStart("");
     setNewCEnd("");
     setIsAddOpen(false);
@@ -753,12 +843,25 @@ export default function Employees({
 
   const saveDossierEdits = () => {
     if (profileEmployee) {
+      const isBranchChanged = editBranch && editBranch !== profileEmployee.branch;
+      const targetBranch = isBranchChanged ? profileEmployee.branch : editBranch;
+
+      if (isBranchChanged) {
+        onInitiateTransfer?.({
+          empId: profileEmployee.id,
+          empName: `${capitalizeString(editFirst)} ${capitalizeString(editLast)}`,
+          fromBranch: profileEmployee.branch,
+          toBranch: editBranch,
+          notes: "Inter-branch transfer requested via profile modification"
+        });
+      }
+
       onUpdateEmployee(profileEmployee.id, {
         first: capitalizeString(editFirst),
         last: capitalizeString(editLast),
         position: editPosition,
         dept: editDept,
-        branch: editBranch,
+        branch: targetBranch,
         salary: Number(editSalary),
         national: editNational,
         gender: editGender,
@@ -767,6 +870,18 @@ export default function Employees({
         photo: getAvatarUrl(editGender, editFirst)
       });
 
+      // Auto-remember salary for position in config
+      if (editPosition.trim() && Number(editSalary) > 0 && onUpdateConfig) {
+        const posKey = capitalizeString(editPosition.trim());
+        onUpdateConfig({
+          ...state.config,
+          positionSalaries: {
+            ...(state.config.positionSalaries || {}),
+            [posKey]: Number(editSalary)
+          }
+        });
+      }
+
       // Synchronize modal state so user sees changed values in summary tabs immediately
       setProfileEmployee(prev => prev ? {
         ...prev,
@@ -774,7 +889,7 @@ export default function Employees({
         last: capitalizeString(editLast),
         position: editPosition,
         dept: editDept,
-        branch: editBranch,
+        branch: targetBranch,
         salary: Number(editSalary),
         national: editNational,
         gender: editGender,
@@ -901,10 +1016,53 @@ export default function Employees({
     return { warnings, documents };
   };
 
+  const allTransfers = state.transfers || [];
+  const pendingIncomingTransfers = allTransfers.filter(t => 
+    t.status === "Pending" && (selectedBranch === "all" || t.toBranch === selectedBranch)
+  );
+  const pendingOutgoingTransfers = allTransfers.filter(t => 
+    t.status === "Pending" && (selectedBranch === "all" || t.fromBranch === selectedBranch)
+  );
+
   return (
     <>
       {!isDossierOnly && (
         <div className="space-y-6 animate-fade-in text-slate-800 dark:text-slate-100">
+
+        {/* INTER-BRANCH INCOMING TRANSFER NOTIFICATION BANNER */}
+        {pendingIncomingTransfers.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-emerald-500/10 border border-amber-500/40 text-amber-950 dark:text-amber-200 shadow-sm animate-fade-in">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-sm shrink-0">
+                <ArrowRightLeft className="h-5 w-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950">
+                    Confirmation Required
+                  </span>
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                    {pendingIncomingTransfers.length} Incoming Teammate Transfer{pendingIncomingTransfers.length > 1 ? "s" : ""}
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                  {pendingIncomingTransfers.map(t => `${t.empName} (from ${t.fromBranch})`).slice(0, 2).join(", ")}
+                  {pendingIncomingTransfers.length > 2 ? ` and ${pendingIncomingTransfers.length - 2} more` : ""} awaiting your branch confirmation before joining your employee list.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setTransfersTab("incoming");
+                setIsTransfersOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition shadow-sm shrink-0 cursor-pointer"
+            >
+              <UserCheck2 className="h-4 w-4" />
+              Review & Confirm Transfers
+            </button>
+          </div>
+        )}
       
       {/* SECTION 1: SYSTEM VISITATION KPI STRIP */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -957,182 +1115,201 @@ export default function Employees({
         </div>
       </div>
 
-      {/* SECTION 2: SEARCH FILTER CONSOLE & UTILITY TOOLBAR */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between bg-white p-4.5 rounded-2xl border border-slate-100 dark:bg-slate-900 dark:border-slate-800">
-        <div className="flex flex-1 flex-wrap gap-3 items-center">
-          
-          {/* Quick Search string ID or full Name */}
-          <div className="relative w-full sm:max-w-xs shrink-0">
-            <Search className="absolute left-3.5 top-2.5 h-4.5 w-4.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Filter by ID, name, keyword..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-10.5 pr-4 text-xs font-semibold text-slate-800 shadow-sm focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-100"
-            />
+      {/* SECTION 2: SEARCH FILTER CONSOLE & UTILITY TOOLBAR (PINNED / UN-SCROLLABLE) */}
+      <div className="sticky top-16 z-20 -mx-1 px-1 py-1.5 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-md space-y-3">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+          <div className="flex flex-1 flex-wrap gap-3 items-center">
+            
+            {/* Quick Search string ID or full Name */}
+            <div className="relative w-full sm:max-w-xs shrink-0">
+              <Search className="absolute left-3.5 top-2.5 h-4.5 w-4.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Filter by ID, name, keyword..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pl-10.5 pr-4 text-xs font-semibold text-slate-800 shadow-sm focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-100"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Department dropdown filters */}
+              <select
+                value={deptFilter}
+                onChange={(e) => setDeptFilter(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300"
+              >
+                <option value="">All Departments ({state.employees.length})</option>
+                {["Kitchen", "Administration", "Operations", "Finance", "Human Resources"].map((dept) => {
+                  const count = state.employees.filter(e => e.dept === dept).length;
+                  return (
+                    <option key={dept} value={dept}>
+                      {dept} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+
+              {/* Position specialized drop downs filters */}
+              <select
+                value={posFilter}
+                onChange={(e) => setPosFilter(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-805 dark:text-slate-300"
+              >
+                <option value="">All Positions ({state.employees.length})</option>
+                {uniquePositions.map(p => {
+                  const count = state.employees.filter(e => e.position === p).length;
+                  return (
+                    <option key={p} value={p}>
+                      {p} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+
+              {/* Employment Status selective dropdown filter */}
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value as any);
+                  setSelectedEmpIds([]);
+                }}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-805 dark:text-slate-300"
+              >
+                <option value="">All Statuses ({state.employees.length})</option>
+                <option value="Active">Active ({state.employees.filter(e => !e.isTerminated).length})</option>
+                <option value="Terminated">Terminated ({state.employees.filter(e => !!e.isTerminated).length})</option>
+              </select>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Department dropdown filters */}
-            <select
-              value={deptFilter}
-              onChange={(e) => setDeptFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300"
-            >
-              <option value="">All Departments ({state.employees.length})</option>
-              {["Kitchen", "Administration", "Operations", "Finance", "Human Resources"].map((dept) => {
-                const count = state.employees.filter(e => e.dept === dept).length;
-                return (
-                  <option key={dept} value={dept}>
-                    {dept} ({count})
-                  </option>
-                );
-              })}
-            </select>
+          {/* View mode toggle and export action panel */}
+          <div className="flex flex-wrap gap-2.5 items-center justify-end border-t border-slate-100 pt-3 lg:border-t-0 lg:pt-0 dark:border-slate-800">
+            
+            {/* Toggle View layout List / Grid */}
+            <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-950 mr-2">
+              <button
+                onClick={() => setViewMode("list")}
+                className={`rounded-lg p-1.5 transition ${viewMode === "list" ? "bg-white text-slate-800 shadow-xs dark:bg-slate-900 dark:text-white" : "text-slate-400 hover:text-slate-600"}`}
+                title="Table view list"
+              >
+                <ListFilter className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setViewMode("grid")}
+                className={`rounded-lg p-1.5 transition ${viewMode === "grid" ? "bg-white text-slate-800 shadow-xs dark:bg-slate-900 dark:text-white" : "text-slate-400 hover:text-slate-600"}`}
+                title="Bento Grid view dashboard"
+              >
+                <Grid className="h-4 w-4" />
+              </button>
+            </div>
 
-            {/* Position specialized drop downs filters */}
-            <select
-              value={posFilter}
-              onChange={(e) => setPosFilter(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-805 dark:text-slate-300"
-            >
-              <option value="">All Positions ({state.employees.length})</option>
-              {uniquePositions.map(p => {
-                const count = state.employees.filter(e => e.position === p).length;
-                return (
-                  <option key={p} value={p}>
-                    {p} ({count})
-                  </option>
-                );
-              })}
-            </select>
-
-            {/* Employment Status selective dropdown filter */}
-            <select
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value as any);
-                setSelectedEmpIds([]);
+            <button
+              onClick={() => {
+                setTransfersTab("incoming");
+                setIsTransfersOpen(true);
               }}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-950 dark:border-slate-805 dark:text-slate-300"
+              className="relative inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"
+              title="Manage inter-branch employee transfers and confirmations"
             >
-              <option value="">All Statuses ({state.employees.length})</option>
-              <option value="Active">Active ({state.employees.filter(e => !e.isTerminated).length})</option>
-              <option value="Terminated">Terminated ({state.employees.filter(e => !!e.isTerminated).length})</option>
-            </select>
+              <ArrowRightLeft className="h-4 w-4 text-emerald-500" />
+              <span>Transfers</span>
+              {pendingIncomingTransfers.length > 0 && (
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 text-slate-950 text-[10px] font-black px-1.5 leading-none shadow-xs animate-pulse">
+                  {pendingIncomingTransfers.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setNewBranch(selectedBranch !== "all" ? selectedBranch : (state.branches[0] || ""));
+                setIsAddOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-600 transition"
+            >
+              <Plus className="h-4 w-4" />
+              New Teammate
+            </button>
+            
+            <button
+              onClick={() => {
+                setBatchBranch(selectedBranch !== "all" ? selectedBranch : (state.branches[0] || ""));
+                setIsBatchOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"
+            >
+              <Grid className="h-4 w-4 text-slate-450" />
+              Batch Entry
+            </button>
+
+            <button
+              onClick={handleExport}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"
+            >
+              <Download className="h-4 w-4 text-slate-450" />
+              Export CSV
+            </button>
           </div>
         </div>
 
-        {/* View mode toggle and export action panel */}
-        <div className="flex flex-wrap gap-2.5 items-center justify-end border-t border-slate-100 pt-3 lg:border-t-0 lg:pt-0 dark:border-slate-800">
-          
-          {/* Toggle View layout List / Grid */}
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-950 mr-2">
-            <button
-              onClick={() => setViewMode("list")}
-              className={`rounded-lg p-1.5 transition ${viewMode === "list" ? "bg-white text-slate-800 shadow-xs dark:bg-slate-900 dark:text-white" : "text-slate-400 hover:text-slate-600"}`}
-              title="Table view list"
-            >
-              <ListFilter className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`rounded-lg p-1.5 transition ${viewMode === "grid" ? "bg-white text-slate-800 shadow-xs dark:bg-slate-900 dark:text-white" : "text-slate-400 hover:text-slate-600"}`}
-              title="Bento Grid view dashboard"
-            >
-              <Grid className="h-4 w-4" />
-            </button>
-          </div>
-
-          <button
-            onClick={() => {
-              setNewBranch(selectedBranch !== "all" ? selectedBranch : (state.branches[0] || ""));
-              setIsAddOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-600 transition"
-          >
-            <Plus className="h-4 w-4" />
-            New Teammate
-          </button>
-          
-          <button
-            onClick={() => {
-              setBatchBranch(selectedBranch !== "all" ? selectedBranch : (state.branches[0] || ""));
-              setIsBatchOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"
-          >
-            <Grid className="h-4 w-4 text-slate-450" />
-            Batch Entry
-          </button>
-
-          <button
-            onClick={handleExport}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"
-          >
-            <Download className="h-4 w-4 text-slate-450" />
-            Export CSV
-          </button>
-        </div>
-      </div>
-
-      {/* SECTION 2.5: BULK ACTIONS CONTROLLER */}
-      {selectedEmpIds.length > 0 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl bg-slate-900 px-5 py-4 text-white shadow-lg border border-slate-800 dark:bg-black/50 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-slate-800 p-2 text-emerald-400">
-              <UserCheck2 className="h-5 w-5" />
+        {/* SECTION 2.5: BULK ACTIONS CONTROLLER */}
+        {selectedEmpIds.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl bg-slate-900 px-5 py-4 text-white shadow-lg border border-slate-800 dark:bg-black/50 animate-fade-in">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-slate-800 p-2 text-emerald-400">
+                <UserCheck2 className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-bold">{selectedEmpIds.length} Selected Teammates</p>
+                <p className="text-[11px] text-slate-400">Apply bulk operations onto the selected subset.</p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-bold">{selectedEmpIds.length} Selected Teammates</p>
-              <p className="text-[11px] text-slate-400">Apply bulk operations onto the selected subset.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            {state.employees.some(e => selectedEmpIds.includes(e.id) && !e.isTerminated) ? (
+            <div className="flex flex-wrap items-center gap-2.5">
+              {state.employees.some(e => selectedEmpIds.includes(e.id) && !e.isTerminated) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTermEmpId(""); // Bulk indicators
+                    setTermReason("Resigned");
+                    setTermNotes("");
+                    setTermDate(new Date().toISOString().split("T")[0]);
+                    setIsTerminateOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-4 py-2 text-xs font-bold text-slate-950 transition"
+                >
+                  <XCircle className="h-4 w-4" />
+                  Bulk Terminate Contracts
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 onClick={() => {
-                  setTermEmpId(""); // Bulk indicators
-                  setTermReason("Resigned");
-                  setTermNotes("");
-                  setTermDate(new Date().toISOString().split("T")[0]);
-                  setIsTerminateOpen(true);
+                  if (onRemoveEmployees) {
+                    onRemoveEmployees(selectedEmpIds);
+                  } else {
+                    selectedEmpIds.forEach(id => onRemoveEmployee(id));
+                  }
+                  setSelectedEmpIds([]);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-4 py-2 text-xs font-bold text-slate-950 transition"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2 text-xs font-bold text-white transition"
               >
-                <XCircle className="h-4 w-4" />
-                Bulk Terminate Contracts
+                <Trash2 className="h-4 w-4" />
+                Bulk Delete Profiles
               </button>
-            ) : null}
 
-            <button
-              type="button"
-              onClick={() => {
-                if (onRemoveEmployees) {
-                  onRemoveEmployees(selectedEmpIds);
-                } else {
-                  selectedEmpIds.forEach(id => onRemoveEmployee(id));
-                }
-                setSelectedEmpIds([]);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2 text-xs font-bold text-white transition"
-            >
-              <Trash2 className="h-4 w-4" />
-              Bulk Delete Profiles
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSelectedEmpIds([])}
-              className="rounded-xl border border-slate-705 bg-slate-800 text-slate-300 hover:bg-slate-700 px-4 py-2 text-xs font-bold transition"
-            >
-              Cancel
-            </button>
+              <button
+                type="button"
+                onClick={() => setSelectedEmpIds([])}
+                className="rounded-xl border border-slate-705 bg-slate-800 text-slate-300 hover:bg-slate-700 px-4 py-2 text-xs font-bold transition"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* SECTION 3: CONDITIONAL VIEW RENDERER (TABLE OR GRID) */}
       {viewMode === "list" ? (
@@ -1164,12 +1341,13 @@ export default function Employees({
                   <th className="px-6 py-4">Position Title</th>
                   <th className="px-6 py-4 text-right">Base Salary (MWK)</th>
                   <th className="px-6 py-4">Operational Status</th>
+                  <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm dark:divide-slate-800">
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-20 text-center text-slate-400 dark:text-slate-550">
+                    <td colSpan={10} className="py-20 text-center text-slate-400 dark:text-slate-550">
                       No registered teammates matched current selected search variables.
                     </td>
                   </tr>
@@ -1261,11 +1439,46 @@ export default function Employees({
                                 <AlertTriangle className="h-3 w-3" /> Contract Renewal Close
                               </span>
                             )}
+                            {/* Check pending transfer */}
+                            {allTransfers.some(t => t.empId === emp.id && t.status === "Pending") && (
+                              <span className="inline-flex items-center gap-1 self-start rounded-full bg-amber-100 text-amber-900 px-2 py-0.5 text-[9px] font-bold dark:bg-amber-950/60 dark:text-amber-300">
+                                <ArrowRightLeft className="h-2.5 w-2.5 text-amber-600 animate-pulse" />
+                                Transfer Pending &rarr; {allTransfers.find(t => t.empId === emp.id && t.status === "Pending")?.toBranch}
+                              </span>
+                            )}
                             {emp.isTerminated && emp.terminationDate && (
                               <span className="text-[9px] font-bold text-slate-400 dark:text-slate-550">
                                 Date: {emp.terminationDate}
                               </span>
                             )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4.5 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1">
+                            {!emp.isTerminated && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTransferTargetEmp(emp);
+                                  const otherBranches = state.branches.filter(b => b !== emp.branch);
+                                  setTransferToBranch(otherBranches[0] || "");
+                                  setTransferNotes("");
+                                  setIsInitiateTransferOpen(true);
+                                }}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40 transition"
+                                title={`Transfer ${emp.first} to another branch`}
+                              >
+                                <ArrowRightLeft className="h-4 w-4" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openProfile(emp)}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 transition"
+                              title="View dossier profile"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1350,6 +1563,12 @@ export default function Employees({
                         <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
                           {emp.branch}
                         </span>
+                        {allTransfers.some(t => t.empId === emp.id && t.status === "Pending") && (
+                          <span className="rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                            <ArrowRightLeft className="h-2.5 w-2.5 animate-pulse" />
+                            Transfer Pending
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1421,6 +1640,23 @@ export default function Employees({
                     </div>
 
                     <div className="flex gap-1">
+                      {!emp.isTerminated ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTransferTargetEmp(emp);
+                            const otherBranches = state.branches.filter(b => b !== emp.branch);
+                            setTransferToBranch(otherBranches[0] || "");
+                            setTransferNotes("");
+                            setIsInitiateTransferOpen(true);
+                          }}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40"
+                          title="Transfer to another branch"
+                        >
+                          <ArrowRightLeft className="h-4 w-4" />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1428,6 +1664,7 @@ export default function Employees({
                           openProfile(emp);
                         }}
                         className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800"
+                        title="View profile"
                       >
                         <Eye className="h-4 w-4" />
                       </button>
@@ -1577,7 +1814,7 @@ export default function Employees({
                 type="text"
                 placeholder="Or specify custom title"
                 value={newPosition}
-                onChange={(e) => setNewPosition(liveCapitalize(e.target.value))}
+                onChange={(e) => handlePositionCustomChange(e.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
               />
             </div>
@@ -1585,16 +1822,31 @@ export default function Employees({
 
           <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="block text-[10px] font-bold text-slate-750 uppercase tracking-wide dark:text-slate-350 mb-1">
-                Base Monthly Salary (MWK)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold text-slate-750 uppercase tracking-wide dark:text-slate-350">
+                  Base Monthly Salary (MWK)
+                </label>
+                {newPosition && lookupRememberedSalary(newPosition) > 0 && (
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                    <Sparkles className="h-3 w-3" /> Auto-remembered
+                  </span>
+                )}
+              </div>
               <input
                 type="number"
                 required
                 value={newSalary === 0 ? "" : newSalary}
-                onChange={(e) => setNewSalary(e.target.value === "" ? 0 : Number(e.target.value))}
+                onChange={(e) => {
+                  setNewSalary(e.target.value === "" ? 0 : Number(e.target.value));
+                  setSalaryAutoSuggested(false);
+                }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
               />
+              {newPosition && lookupRememberedSalary(newPosition) > 0 && (
+                <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                  <span>Standard position rate for <strong>{newPosition}</strong>: MWK {lookupRememberedSalary(newPosition).toLocaleString()} (editable)</span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -1890,6 +2142,45 @@ export default function Employees({
                         >
                           Modify Profile Records
                         </button>
+
+                        {/* Inter-Branch Transfer Option */}
+                        {!profileEmployee.isTerminated && (
+                          (() => {
+                            const activeTransfer = allTransfers.find(t => t.empId === profileEmployee.id && t.status === "Pending");
+                            if (activeTransfer) {
+                              return (
+                                <div className="w-full rounded-xl bg-amber-500/10 border border-amber-500/30 p-2.5 text-left text-xs space-y-1">
+                                  <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 font-bold text-[11px]">
+                                    <span className="flex items-center gap-1.5">
+                                      <ArrowRightLeft className="h-3.5 w-3.5 animate-pulse" />
+                                      Transfer Pending
+                                    </span>
+                                    <span className="font-mono text-[9px] uppercase">{activeTransfer.id}</span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                                    Transfer to <strong>{activeTransfer.toBranch}</strong> requested. Awaiting confirmation from {activeTransfer.toBranch} before being indexed in their employee list.
+                                  </p>
+                                </div>
+                              );
+                            }
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTransferTargetEmp(profileEmployee);
+                                  const otherBranches = state.branches.filter(b => b !== profileEmployee.branch);
+                                  setTransferToBranch(otherBranches[0] || "");
+                                  setTransferNotes("");
+                                  setIsInitiateTransferOpen(true);
+                                }}
+                                className="w-full text-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 py-2 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                              >
+                                <ArrowRightLeft className="h-4 w-4 text-emerald-500" />
+                                Transfer to Another Branch
+                              </button>
+                            );
+                          })()
+                        )}
                         
                         {!profileEmployee.isTerminated ? (
                           <button
@@ -2112,6 +2403,11 @@ export default function Employees({
                                   <option key={b} value={b}>{b}</option>
                                 ))}
                               </select>
+                              {editBranch !== profileEmployee?.branch && (
+                                <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                                  * Inter-branch transfer: {editBranch} must confirm before {editFirst} is added to their employee list.
+                                </p>
+                              )}
                             </div>
                           </div>
 
@@ -2121,18 +2417,30 @@ export default function Employees({
                               <input
                                 type="text"
                                 value={editPosition}
-                                onChange={(e) => setEditPosition(liveCapitalize(e.target.value))}
+                                onChange={(e) => handleEditPositionChange(e.target.value)}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                               />
                             </div>
                             <div>
-                              <label className="block text-[10px] font-extrabold uppercase text-slate-450 mb-1">Base Monthly Salary (MWK)</label>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="block text-[10px] font-extrabold uppercase text-slate-450">Base Monthly Salary (MWK)</label>
+                                {editPosition && lookupRememberedSalary(editPosition) > 0 && (
+                                  <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-0.5">
+                                    <Sparkles className="h-2.5 w-2.5" /> Auto-suggested
+                                  </span>
+                                )}
+                              </div>
                               <input
                                 type="number"
                                 value={editSalary === 0 ? "" : editSalary}
                                 onChange={(e) => setEditSalary(e.target.value === "" ? 0 : Number(e.target.value))}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-mono focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                               />
+                              {editPosition && lookupRememberedSalary(editPosition) > 0 && (
+                                <p className="mt-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                                  Standard rate: MWK {lookupRememberedSalary(editPosition).toLocaleString()}
+                                </p>
+                              )}
                             </div>
                           </div>
 
@@ -2683,6 +2991,354 @@ export default function Employees({
             </form>
           );
         })()}
+      </Modal>
+
+      {/* MODAL 6: INITIATE INTER-BRANCH TRANSFER */}
+      <Modal
+        isOpen={isInitiateTransferOpen}
+        onClose={() => {
+          setIsInitiateTransferOpen(false);
+          setTransferTargetEmp(null);
+          setTransferNotes("");
+        }}
+        title="Initiate Inter-Branch Teammate Transfer"
+        subtitle="Transfer an employee to another regional operational branch. The receiving branch must review and confirm before the teammate is indexed in their employee list."
+        maxWidthClass="max-w-md"
+      >
+        {transferTargetEmp && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!transferToBranch || transferToBranch === transferTargetEmp.branch) return;
+              if (onInitiateTransfer) {
+                onInitiateTransfer({
+                  empId: transferTargetEmp.id,
+                  empName: `${transferTargetEmp.first} ${transferTargetEmp.last}`,
+                  fromBranch: transferTargetEmp.branch,
+                  toBranch: transferToBranch,
+                  notes: transferNotes.trim() || "Inter-branch operational transfer",
+                });
+              }
+              setIsInitiateTransferOpen(false);
+              setTransferNotes("");
+              setTransferTargetEmp(null);
+            }}
+            className="space-y-4"
+          >
+            {/* Teammate Summary Card */}
+            <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-100 dark:border-slate-800">
+              <img
+                src={transferTargetEmp.photo || getAvatarUrl(transferTargetEmp.gender, transferTargetEmp.first)}
+                alt={transferTargetEmp.first}
+                className="h-12 w-12 rounded-full object-cover ring-2 ring-emerald-500/20 shadow-sm"
+              />
+              <div className="min-w-0 flex-1">
+                <h5 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                  {transferTargetEmp.first} {transferTargetEmp.last}
+                </h5>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {transferTargetEmp.position} &bull; {transferTargetEmp.dept}
+                </p>
+                <div className="flex items-center gap-1.5 mt-1 text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                  <span>Current Branch: {transferTargetEmp.branch}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Destination Branch */}
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wide dark:text-slate-350 mb-1">
+                Destination Target Branch
+              </label>
+              <select
+                required
+                value={transferToBranch}
+                onChange={(e) => setTransferToBranch(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+              >
+                <option value="">Select destination branch...</option>
+                {state.branches
+                  .filter(b => b !== transferTargetEmp.branch)
+                  .map(b => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+              </select>
+            </div>
+
+            {/* Transfer Notes */}
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wide dark:text-slate-350 mb-1">
+                Transfer Reason / Deployment Notes
+              </label>
+              <textarea
+                rows={3}
+                placeholder="e.g. Relocating staff for regional workload balance or department shift..."
+                value={transferNotes}
+                onChange={(e) => setTransferNotes(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white p-3 text-xs focus:border-emerald-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
+              />
+            </div>
+
+            {/* Crucial Confirmation Notice */}
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3.5 text-xs text-amber-900 dark:text-amber-300 flex items-start gap-2.5">
+              <AlertCircle className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] leading-relaxed">
+                <span className="font-bold">Confirmation Rule:</span> The teammate remains in <strong>{transferTargetEmp.branch}</strong> until management at <strong>{transferToBranch || "the receiving branch"}</strong> reviews and confirms the transfer request.
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsInitiateTransferOpen(false);
+                  setTransferTargetEmp(null);
+                }}
+                className="w-1/2 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!transferToBranch || transferToBranch === transferTargetEmp.branch}
+                className="w-1/2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 py-2.5 text-xs font-bold text-white shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Send className="h-3.5 w-3.5" />
+                Submit Transfer Request
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* MODAL 7: INTER-BRANCH EMPLOYEE TRANSFERS CONSOLE */}
+      <Modal
+        isOpen={isTransfersOpen}
+        onClose={() => setIsTransfersOpen(false)}
+        title="Inter-Branch Teammate Transfers"
+        subtitle="Manage pending incoming transfers, track outgoing requests, and audit confirmation records across branches."
+        maxWidthClass="max-w-2xl"
+      >
+        <div className="space-y-4">
+          {/* Tabs */}
+          <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+            <button
+              onClick={() => setTransfersTab("incoming")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                transfersTab === "incoming"
+                  ? "bg-amber-500 text-slate-950 font-black shadow-xs"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              <span>Incoming Requests</span>
+              {pendingIncomingTransfers.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-slate-950 text-amber-400">
+                  {pendingIncomingTransfers.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setTransfersTab("outgoing")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                transfersTab === "outgoing"
+                  ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-black"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              <span>Outgoing Requests</span>
+              {pendingOutgoingTransfers.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950">
+                  {pendingOutgoingTransfers.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setTransfersTab("history")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                transfersTab === "history"
+                  ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-black"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              }`}
+            >
+              Transfer History
+            </button>
+          </div>
+
+          {/* TAB 1: INCOMING REQUESTS */}
+          {transfersTab === "incoming" && (
+            <div className="space-y-3">
+              {pendingIncomingTransfers.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 dark:text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-6">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-500/60 mx-auto mb-2" />
+                  <p className="font-bold text-xs">No pending incoming transfer requests.</p>
+                  <p className="text-[11px] mt-1 text-slate-400">
+                    When another branch requests to transfer a teammate to {selectedBranch === "all" ? "any branch" : selectedBranch}, a confirmation prompt will appear here.
+                  </p>
+                </div>
+              ) : (
+                pendingIncomingTransfers.map(t => {
+                  const emp = state.employees.find(e => e.id === t.empId);
+                  return (
+                    <div
+                      key={t.id}
+                      className="p-4 rounded-2xl border border-amber-200 bg-amber-50/40 dark:bg-slate-900 dark:border-amber-950/60 shadow-xs space-y-3"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/50 dark:border-slate-800 pb-2.5">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={emp?.photo || getAvatarUrl(emp?.gender || "Other", t.empName)}
+                            alt={t.empName}
+                            className="h-10 w-10 rounded-full object-cover ring-2 ring-amber-400/40 shadow-xs"
+                          />
+                          <div>
+                            <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                              {t.empName}
+                            </h4>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {emp?.position || "Teammate"} &bull; ID: {t.empId} &bull; Salary: MWK {(emp?.salary || 0).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="self-start sm:self-center font-mono text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-full">
+                          Requested: {new Date(t.requestDate).toLocaleDateString()}
+                        </span>
+                      </div>
+
+                      {/* Route indicator */}
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200">
+                        <span className="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                          {t.fromBranch}
+                        </span>
+                        <ArrowRightLeft className="h-4 w-4 text-amber-500 shrink-0" />
+                        <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-350 border border-emerald-200 dark:border-emerald-800">
+                          {t.toBranch} (Receiving Branch)
+                        </span>
+                      </div>
+
+                      {t.notes && (
+                        <div className="text-xs text-slate-600 dark:text-slate-400 bg-white/70 dark:bg-slate-950/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-850">
+                          <strong className="text-slate-700 dark:text-slate-300">Reason/Notes:</strong> {t.notes}
+                        </div>
+                      )}
+
+                      {/* Action buttons */}
+                      <div className="flex gap-2.5 pt-1 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => onRejectTransfer?.(t.id, "Declined by destination branch management")}
+                          className="px-3.5 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:border-rose-900 dark:text-rose-400 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Decline Transfer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onConfirmTransfer?.(t.id)}
+                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <UserCheck2 className="h-4 w-4" />
+                          Confirm & Add to Employee List
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: OUTGOING REQUESTS */}
+          {transfersTab === "outgoing" && (
+            <div className="space-y-3">
+              {pendingOutgoingTransfers.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 dark:text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-6">
+                  <p className="font-bold text-xs">No active outgoing transfer requests.</p>
+                  <p className="text-[11px] mt-1 text-slate-400">
+                    When you initiate a transfer to another branch, its pending status awaiting their confirmation will appear here.
+                  </p>
+                </div>
+              ) : (
+                pendingOutgoingTransfers.map(t => (
+                  <div
+                    key={t.id}
+                    className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 dark:bg-slate-900 dark:border-slate-800 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t.empName}</h4>
+                        <p className="text-xs text-slate-500">ID: {t.empId}</p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                        <Clock className="h-3 w-3" />
+                        Awaiting Confirmation from {t.toBranch}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      <span>{t.fromBranch}</span>
+                      <ArrowRightLeft className="h-3.5 w-3.5 text-slate-400" />
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">{t.toBranch}</span>
+                    </div>
+
+                    {t.notes && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 italic">"{t.notes}"</p>
+                    )}
+
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+                      <span>Requested on {new Date(t.requestDate).toLocaleDateString()}</span>
+                      <button
+                        type="button"
+                        onClick={() => onRejectTransfer?.(t.id, "Cancelled by origin branch")}
+                        className="text-rose-500 hover:text-rose-700 font-bold transition cursor-pointer"
+                      >
+                        Cancel Request
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: HISTORY */}
+          {transfersTab === "history" && (
+            <div className="space-y-3">
+              {allTransfers.filter(t => t.status !== "Pending").length === 0 ? (
+                <div className="py-12 text-center text-slate-400 dark:text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-6">
+                  No historical transfer records completed yet.
+                </div>
+              ) : (
+                allTransfers.filter(t => t.status !== "Pending").map(t => (
+                  <div
+                    key={t.id}
+                    className="p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/60 flex items-center justify-between text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-800 dark:text-white">{t.empName}</span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase ${
+                          t.status === "Approved"
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                            : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                        }`}>
+                          {t.status}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {t.fromBranch} &rarr; {t.toBranch} &bull; {t.reviewDate ? new Date(t.reviewDate).toLocaleDateString() : ""}
+                      </p>
+                    </div>
+                    {t.reviewNotes && (
+                      <span className="text-[10px] text-slate-400 italic max-w-xs truncate text-right">
+                        "{t.reviewNotes}"
+                      </span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </Modal>
 
     </>
