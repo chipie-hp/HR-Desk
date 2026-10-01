@@ -374,3 +374,274 @@ export function calculateOvertimeHours(outTime: string, inTime: string = "06:00"
   const worked = calculateWorkingHours(status, inTime, outTime);
   return worked > 8.0 ? parseFloat((worked - 8.0).toFixed(1)) : 0;
 }
+
+/**
+ * Returns numerical rank for position alignment in export documents & registries:
+ * 1. Head Chef
+ * 2. Chef
+ * 3. Waiter
+ * 4. Waitress
+ * 5. Porter
+ * 6. Admin
+ * 100+. Other positions
+ */
+export function getPositionRank(position?: string): number {
+  if (!position) return 999;
+  const p = position.trim().toLowerCase();
+
+  // 1. Head Chef
+  if (p === "head chef" || p.startsWith("head chef") || p.includes("head chef")) {
+    return 1;
+  }
+  // 2. Chef (excluding head chef)
+  if (p === "chef" || p.endsWith("chef") || p.includes("chef") || p.includes("cook")) {
+    return 2;
+  }
+  // 3. Waiter (strict check to avoid matching waitress)
+  if (p === "waiter" || (p.includes("waiter") && !p.includes("waitress"))) {
+    return 3;
+  }
+  // 4. Waitress
+  if (p === "waitress" || p.includes("waitress")) {
+    return 4;
+  }
+  // 5. Porter
+  if (p === "porter" || p.includes("porter")) {
+    return 5;
+  }
+  // 6. Admin / Administrator
+  if (
+    p === "admin" ||
+    p === "administrator" ||
+    p === "administration" ||
+    p.includes("admin")
+  ) {
+    return 6;
+  }
+
+  // Any other positions
+  return 100;
+}
+
+/**
+ * Comparator to align employees strictly:
+ * Head Chef -> Chef -> Waiter -> Waitress -> Porter -> Admin -> Others
+ */
+export function sortEmployeesByPositionHierarchy(a: Employee, b: Employee): number {
+  const rankA = getPositionRank(a.position);
+  const rankB = getPositionRank(b.position);
+  if (rankA !== rankB) {
+    return rankA - rankB;
+  }
+
+  // If same rank, compare position name alphabetically
+  const posComp = (a.position || "").localeCompare(b.position || "");
+  if (posComp !== 0) return posComp;
+
+  // Then compare full name
+  const nameA = `${a.first} ${a.last}`.trim().toLowerCase();
+  const nameB = `${b.first} ${b.last}`.trim().toLowerCase();
+  const nameComp = nameA.localeCompare(nameB);
+  if (nameComp !== 0) return nameComp;
+
+  return a.id.localeCompare(b.id);
+}
+
+/**
+ * Generates an official, printable and downloadable corporate Staff Directory document
+ * with employees strictly aligned: Head Chef, Chef, Waiter, Waitress, Porter, Admin.
+ */
+export function exportEmployeeRegisterHTML(
+  employees: Employee[],
+  companyName: string = "HR Desk Operations",
+  branchName: string = "All Branches"
+): void {
+  const sorted = [...employees].sort(sortEmployeesByPositionHierarchy);
+  const totalSalary = sorted.reduce((sum, e) => sum + (e.salary || 0), 0);
+  const activeCount = sorted.filter(e => !e.isTerminated).length;
+  const dateStr = new Date().toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric"
+  });
+
+  const rowsHtml = sorted.map((emp, index) => {
+    const rank = getPositionRank(emp.position);
+    let rankBadge = "";
+    if (rank === 1) rankBadge = `<span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:bold;border:1px solid #fde68a;">1. Head Chef</span>`;
+    else if (rank === 2) rankBadge = `<span style="background:#e0f2fe;color:#0369a1;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:bold;border:1px solid #bae6fd;">2. Chef</span>`;
+    else if (rank === 3) rankBadge = `<span style="background:#ecfdf5;color:#047857;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:bold;border:1px solid #a7f3d0;">3. Waiter</span>`;
+    else if (rank === 4) rankBadge = `<span style="background:#fdf2f8;color:#be185d;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:bold;border:1px solid #fbcfe8;">4. Waitress</span>`;
+    else if (rank === 5) rankBadge = `<span style="background:#f3e8ff;color:#6b21a8;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:bold;border:1px solid #e9d5ff;">5. Porter</span>`;
+    else if (rank === 6) rankBadge = `<span style="background:#f1f5f9;color:#334155;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:bold;border:1px solid #cbd5e1;">6. Admin</span>`;
+    else rankBadge = `<span style="background:#f8fafc;color:#64748b;padding:2px 7px;border-radius:4px;font-size:10px;border:1px solid #e2e8f0;">Staff Role</span>`;
+
+    const statusBadge = emp.isTerminated
+      ? `<span style="color:#dc2626;font-weight:bold;font-size:11px;background:#fef2f2;padding:2px 6px;border-radius:4px;border:1px solid #fecaca;">Terminated</span>`
+      : `<span style="color:#16a34a;font-weight:bold;font-size:11px;background:#f0fdf4;padding:2px 6px;border-radius:4px;border:1px solid #bbf7d0;">Active</span>`;
+
+    return `
+      <tr style="border-bottom:1px solid #e2e8f0;${index % 2 === 1 ? 'background:#fafafa;' : ''}">
+        <td style="padding:10px 12px;text-align:center;font-weight:600;color:#64748b;font-size:11px;">${index + 1}</td>
+        <td style="padding:10px 12px;font-family:monospace;font-weight:700;color:#334155;font-size:12px;">${emp.id}</td>
+        <td style="padding:10px 12px;">
+          <div style="font-weight:bold;color:#0f172a;font-size:13px;">${emp.first} ${emp.last}</div>
+          <div style="font-size:10px;color:#64748b;margin-top:2px;">${emp.gender || 'Other'} &bull; National ID: ${emp.national || 'N/A'}</div>
+        </td>
+        <td style="padding:10px 12px;">
+          <div style="font-weight:700;color:#1e293b;font-size:12px;margin-bottom:3px;">${emp.position || 'Staff'}</div>
+          ${rankBadge}
+        </td>
+        <td style="padding:10px 12px;color:#475569;font-size:12px;">${emp.dept || 'Operations'}</td>
+        <td style="padding:10px 12px;color:#475569;font-size:12px;font-weight:600;">${emp.branch || 'Main Branch'}</td>
+        <td style="padding:10px 12px;text-align:right;font-family:monospace;font-weight:700;color:#0f172a;font-size:12px;">
+          MWK ${(emp.salary || 0).toLocaleString()}
+        </td>
+        <td style="padding:10px 12px;text-align:center;">${statusBadge}</td>
+        <td style="padding:10px 12px;color:#64748b;font-size:11px;text-align:center;">${emp.cend || 'N/A'}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const docHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${companyName} - Official Employee Registry Document</title>
+  <style>
+    @page { size: A4 landscape; margin: 10mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #1e293b; margin: 0; padding: 24px; background: #f8fafc; }
+    .page-container { max-width: 1150px; margin: 0 auto; background: #fff; padding: 36px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header-bar { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 18px; margin-bottom: 20px; }
+    .company-title { font-size: 22px; font-weight: 900; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+    .doc-subtitle { font-size: 13px; font-weight: 800; color: #059669; text-transform: uppercase; margin-top: 4px; letter-spacing: 0.8px; }
+    .meta-box { text-align: right; font-size: 11px; color: #64748b; line-height: 1.6; }
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
+    .kpi-card { background: #f8fafc; padding: 12px 16px; border-radius: 8px; border: 1px solid #e2e8f0; border-left: 4px solid #059669; }
+    .kpi-label { font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-val { font-size: 18px; font-weight: 900; color: #0f172a; margin-top: 4px; }
+    .hierarchy-legend { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 14px; margin-bottom: 20px; font-size: 11px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: #166534; }
+    .hierarchy-legend strong { color: #0f172a; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 30px; }
+    th { background: #0f172a; color: #fff; padding: 10px 12px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; text-align: left; }
+    .signatures-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 36px; padding-top: 24px; border-top: 1px dashed #cbd5e1; }
+    .sig-box { font-size: 11px; color: #475569; }
+    .sig-line { border-bottom: 1px solid #94a3b8; height: 36px; margin-bottom: 6px; }
+    .sig-title { font-weight: 700; color: #0f172a; text-transform: uppercase; font-size: 10px; }
+    .print-controls { margin-bottom: 16px; display: flex; justify-content: flex-end; gap: 10px; max-width: 1150px; margin-left: auto; margin-right: auto; }
+    .btn { padding: 9px 18px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; border: none; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary { background: #059669; color: #fff; box-shadow: 0 2px 4px rgba(5,150,105,0.2); }
+    .btn-primary:hover { background: #047857; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page-container { box-shadow: none; padding: 0; border: none; }
+      .print-controls { display: none !important; }
+      tr { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-controls">
+    <button class="btn btn-primary" onclick="window.print()">🖨️ Print / Save as PDF</button>
+  </div>
+  <div class="page-container">
+    <div class="header-bar">
+      <div>
+        <div class="company-title">${companyName}</div>
+        <div class="doc-subtitle">Official Staff Register &amp; Alignment Document</div>
+      </div>
+      <div class="meta-box">
+        <div><strong>Branch Location:</strong> ${branchName}</div>
+        <div><strong>Export Date:</strong> ${dateStr}</div>
+        <div><strong>Document Status:</strong> Certified Official Copy</div>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Registered Staff</div>
+        <div class="kpi-val">${sorted.length} Teammates</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Active Headcount</div>
+        <div class="kpi-val">${activeCount} Active</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Monthly Payroll Remittance</div>
+        <div class="kpi-val">MWK ${totalSalary.toLocaleString()}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Position Alignment</div>
+        <div class="kpi-val" style="font-size:12px;font-weight:800;color:#059669;margin-top:6px;">
+          Head Chef &rarr; Chef &rarr; Waiter &rarr; Waitress &rarr; Porter &rarr; Admin
+        </div>
+      </div>
+    </div>
+
+    <div class="hierarchy-legend">
+      <strong>Hierarchical Alignment Order:</strong>
+      <span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-weight:bold;">1. Head Chef</span> &rarr;
+      <span style="background:#e0f2fe;color:#0369a1;padding:2px 6px;border-radius:4px;font-weight:bold;">2. Chef</span> &rarr;
+      <span style="background:#ecfdf5;color:#047857;padding:2px 6px;border-radius:4px;font-weight:bold;">3. Waiter</span> &rarr;
+      <span style="background:#fdf2f8;color:#be185d;padding:2px 6px;border-radius:4px;font-weight:bold;">4. Waitress</span> &rarr;
+      <span style="background:#f3e8ff;color:#6b21a8;padding:2px 6px;border-radius:4px;font-weight:bold;">5. Porter</span> &rarr;
+      <span style="background:#f1f5f9;color:#334155;padding:2px 6px;border-radius:4px;font-weight:bold;">6. Admin</span> &rarr;
+      <span style="color:#64748b;">7. Other Roles</span>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:36px;text-align:center;">#</th>
+          <th style="width:85px;">Serial ID</th>
+          <th>Full Name &amp; Profile</th>
+          <th>Position Title &amp; Rank</th>
+          <th>Department</th>
+          <th>Branch</th>
+          <th style="text-align:right;">Salary (MWK)</th>
+          <th style="text-align:center;width:75px;">Status</th>
+          <th style="text-align:center;width:95px;">Contract End</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+
+    <div class="signatures-grid">
+      <div class="sig-box">
+        <div class="sig-title">Prepared By (Human Resources)</div>
+        <div class="sig-line"></div>
+        <div>Signature: __________________ &bull; Date: __________</div>
+      </div>
+      <div class="sig-box">
+        <div class="sig-title">Verified By (Operations Control)</div>
+        <div class="sig-line"></div>
+        <div>Signature: __________________ &bull; Date: __________</div>
+      </div>
+      <div class="sig-box">
+        <div class="sig-title">Approved By (Regional Manager)</div>
+        <div class="sig-line"></div>
+        <div>Official Seal: _______________ &bull; Date: __________</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const blob = new Blob([docHTML], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Staff_Register_${branchName.replace(/\s+/g, '_')}_${new Date().toISOString().split("T")[0]}.html`);
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  const printWindow = window.open("", "_blank");
+  if (printWindow) {
+    printWindow.document.write(docHTML);
+    printWindow.document.close();
+  }
+}

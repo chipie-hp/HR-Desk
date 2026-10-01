@@ -8,7 +8,7 @@ import { Calculator, Download, Receipt, Printer, X, ShieldCheck } from "lucide-r
 import { jsPDF } from "jspdf";
 import { DatabaseState, PayrollRecord, Employee } from "../types";
 import { Modal } from "./Modals";
-import { exportToCSV } from "../utils";
+import { exportToCSV, sortEmployeesByPositionHierarchy } from "../utils";
 
 interface PayrollProps {
   state: DatabaseState;
@@ -310,21 +310,52 @@ export default function Payroll({
       return;
     }
 
-    const headers = ["Employee ID", "Full Name", "Base Salary", "Loans Fraction", "Advances", "Absent Deductions", "Penalties", "PAYE Tax", "Pension Contr", "Net Pay (MWK)"];
-    const rows = state.payroll.map(p => [
-      p.id,
-      p.name,
-      String(p.base),
-      String(p.loans),
-      String(p.advances),
-      String(p.absentDeduction),
-      String(p.penalties),
-      String(p.paye),
-      String(p.pension),
-      String(p.net)
-    ]);
+    // Align employees strictly: Head Chef -> Chef -> Waiter -> Waitress -> Porter -> Admin -> Others
+    const sortedPayroll = [...state.payroll].sort((a, b) => {
+      const empA = state.employees.find(e => e.id === a.id);
+      const empB = state.employees.find(e => e.id === b.id);
+      if (empA && empB) {
+        return sortEmployeesByPositionHierarchy(empA, empB);
+      }
+      return 0;
+    });
+
+    const headers = [
+      "No.",
+      "Employee ID",
+      "Full Name",
+      "Position",
+      "Branch",
+      "Base Salary",
+      "Loans Fraction",
+      "Advances",
+      "Absent Deductions",
+      "Penalties",
+      "PAYE Tax",
+      "Pension Contr",
+      "Net Pay (MWK)"
+    ];
+    const rows = sortedPayroll.map((p, idx) => {
+      const emp = state.employees.find(e => e.id === p.id);
+      return [
+        String(idx + 1),
+        p.id,
+        p.name,
+        emp?.position || "Staff",
+        emp?.branch || "Main Branch",
+        String(p.base),
+        String(p.loans),
+        String(p.advances),
+        String(p.absentDeduction),
+        String(p.penalties),
+        String(p.paye),
+        String(p.pension),
+        String(p.net)
+      ];
+    });
 
     exportToCSV(headers, rows, "Regional_Payroll_Ledger_Statements");
+    showToast("Payroll ledger exported with employees aligned by position hierarchy.", "success");
   };
 
   const activeEmployee = selectedPayslip 

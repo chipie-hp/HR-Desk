@@ -780,6 +780,7 @@ export default function App() {
             onConfirmTransfer={handleConfirmTransfer}
             onRejectTransfer={handleRejectTransfer}
             onUpdateConfig={handleUpdateConfig}
+            showToast={showToast}
           />
         );
       case "attendance":

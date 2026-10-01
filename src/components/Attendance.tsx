@@ -22,7 +22,7 @@ import {
   Gauge
 } from "lucide-react";
 import { DatabaseState, AttendanceRecord, AttendanceDatabase, Employee, DeductionApproval, DocumentRecord } from "../types";
-import { calculateOvertimeHours, exportToCSV } from "../utils";
+import { calculateOvertimeHours, exportToCSV, sortEmployeesByPositionHierarchy } from "../utils";
 import { ConfirmModal, Modal } from "./Modals";
 
 interface AttendanceProps {
@@ -261,14 +261,30 @@ export default function Attendance({
   };
 
   const handleExportAttendance = () => {
-    const headers = ["Employee ID", "Employee Name", "Branch Location", "Department Module", "Attendance Date", "Registry Status", "Check-In Time", "Check-Out Time", "Actual Worked Hours", "Overtime (Hrs)"];
-    const rows = filteredEmployees.map(emp => {
+    const sortedEmployees = [...filteredEmployees].sort(sortEmployeesByPositionHierarchy);
+    const headers = [
+      "No.",
+      "Employee ID",
+      "Employee Name",
+      "Position Title",
+      "Branch Location",
+      "Department Module",
+      "Attendance Date",
+      "Registry Status",
+      "Check-In Time",
+      "Check-Out Time",
+      "Actual Worked Hours",
+      "Overtime (Hrs)"
+    ];
+    const rows = sortedEmployees.map((emp, idx) => {
       const record = localAttendance[emp.id] || { status: "Present", inTime: "06:00", outTime: "17:00" };
       const hours = calculateWorkedHours(record.status, record.inTime, record.outTime);
       const ot = calculateOvertimeHours(record.outTime, record.inTime, record.status);
       return [
+        String(idx + 1),
         emp.id,
         `${emp.first} ${emp.last}`,
+        emp.position || "Staff",
         emp.branch,
         emp.dept,
         date,
@@ -281,7 +297,7 @@ export default function Attendance({
     });
 
     exportToCSV(headers, rows, `Corporate_Attendance_Ledger_${date}`);
-    showToast(`Attendance spreadsheet table exported for ${date}.`, "success");
+    showToast(`Attendance spreadsheet table exported for ${date} (aligned by position hierarchy).`, "success");
   };
 
   // Automated sweep for employees with 5+ cumulative monthly absences without penalty

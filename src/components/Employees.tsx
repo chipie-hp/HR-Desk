@@ -42,7 +42,15 @@ import {
 import { jsPDF } from "jspdf";
 import { Employee, DatabaseState, EmployeeTransfer, SystemConfig } from "../types";
 import { Modal } from "./Modals";
-import { exportToCSV, parseCSVInput, capitalizeString, getAvatarUrl } from "../utils";
+import { 
+  exportToCSV, 
+  parseCSVInput, 
+  capitalizeString, 
+  getAvatarUrl,
+  getPositionRank,
+  sortEmployeesByPositionHierarchy,
+  exportEmployeeRegisterHTML
+} from "../utils";
 
 interface EmployeesProps {
   state: DatabaseState;
@@ -63,6 +71,7 @@ interface EmployeesProps {
   onConfirmTransfer?: (transferId: string) => void;
   onRejectTransfer?: (transferId: string, reason?: string) => void;
   onUpdateConfig?: (config: SystemConfig) => void;
+  showToast?: (msg: string, type: "success" | "error" | "info") => void;
 }
 
 type TabType = "overview" | "financials" | "attendance" | "compliance";
@@ -101,6 +110,7 @@ export default function Employees({
   onConfirmTransfer,
   onRejectTransfer,
   onUpdateConfig,
+  showToast,
 }: EmployeesProps) {
   // Navigation & View layout
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -110,6 +120,7 @@ export default function Employees({
   const [deptFilter, setDeptFilter] = useState("");
   const [posFilter, setPosFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"Active" | "Terminated" | "">("Active");
+  const [sortBy, setSortBy] = useState<"hierarchy" | "id" | "name" | "salary">("hierarchy");
 
   // Selection state
   const [selectedEmpIds, setSelectedEmpIds] = useState<string[]>([]);
@@ -802,22 +813,61 @@ export default function Employees({
     setRenewEmpId("");
   };
 
+  // EXPORT DOCUMENT: Official Printable & Downloadable Staff Directory (Aligned: Head Chef -> Chef -> Waiter -> Waitress -> Porter -> Admin)
+  const handleExportDocument = () => {
+    if (filtered.length === 0) {
+      showToast("No employee records matching current criteria to export.", "error");
+      return;
+    }
+    const branchLabel = selectedBranch === "all" ? "All Regional Branches" : selectedBranch;
+    exportEmployeeRegisterHTML(
+      filtered,
+      state.config?.company_name || "HR Desk Operations",
+      branchLabel
+    );
+    showToast(`Exported official staff document (${filtered.length} employees aligned by position hierarchy).`, "success");
+  };
+
+  // EXPORT CSV: Aligned strictly from Head Chef, Chef, Waiter, Waitress, Porter, Admin, Others
   const handleExport = () => {
-    const headers = ["ID", "First Name", "Last Name", "Gender", "Branch", "Department", "Position", "Salary (MWK)", "National ID", "Contract Start", "Contract End"];
-    const rows = filtered.map(e => [
+    if (filtered.length === 0) {
+      showToast("No employee records matching current criteria to export.", "error");
+      return;
+    }
+    const sorted = [...filtered].sort(sortEmployeesByPositionHierarchy);
+    const headers = [
+      "No.",
+      "Serial ID",
+      "Full Name",
+      "Position Title",
+      "Hierarchy Rank",
+      "Department",
+      "Operational Branch",
+      "Base Monthly Salary (MWK)",
+      "Gender",
+      "National ID",
+      "Contract Start",
+      "Contract End",
+      "Status"
+    ];
+    const rows = sorted.map((e, idx) => [
+      String(idx + 1),
       e.id,
-      e.first,
-      e.last,
-      e.gender || "Other",
-      e.branch,
+      `${e.first} ${e.last}`,
+      e.position || "Staff",
+      String(getPositionRank(e.position)),
       e.dept,
-      e.position,
+      e.branch,
       String(e.salary),
+      e.gender || "Other",
       e.national || "N/A",
       e.cstart || "N/A",
-      e.cend || "N/A"
+      e.cend || "N/A",
+      e.isTerminated ? "Terminated" : "Active"
     ]);
-    exportToCSV(headers, rows, "HR_Desk_Employee_Registry");
+    const branchSlug = (selectedBranch === "all" ? "All_Branches" : selectedBranch).replace(/\s+/g, "_");
+    exportToCSV(headers, rows, `HR_Desk_Employee_Register_${branchSlug}`);
+    showToast(`Spreadsheet exported with ${sorted.length} employees aligned by position hierarchy.`, "success");
   };
 
   const openProfile = (emp: Employee) => {
@@ -903,7 +953,7 @@ export default function Employees({
   };
 
   // CALCULATE ACTIVE METRICS FROM DATABASE STATE for selected or overall lists
-  const filtered = state.employees.filter(emp => {
+  const rawFiltered = state.employees.filter(emp => {
     const q = search.toLowerCase();
     const matchesSearch = 
       emp.first.toLowerCase().includes(q) || 
@@ -921,7 +971,26 @@ export default function Employees({
     return matchesSearch && matchesDept && matchesPos && matchesStatus;
   });
 
-  const uniquePositions = Array.from(new Set(state.employees.map(e => e.position)));
+  // Default sorting aligns employees by position hierarchy: Head Chef -> Chef -> Waiter -> Waitress -> Porter -> Admin -> Others
+  const filtered = [...rawFiltered].sort((a, b) => {
+    if (sortBy === "hierarchy") {
+      return sortEmployeesByPositionHierarchy(a, b);
+    } else if (sortBy === "name") {
+      return `${a.first} ${a.last}`.localeCompare(`${b.first} ${b.last}`);
+    } else if (sortBy === "salary") {
+      return b.salary - a.salary;
+    } else {
+      return a.id.localeCompare(b.id);
+    }
+  });
+
+  const uniquePositions = Array.from(new Set(state.employees.map(e => e.position)))
+    .sort((a, b) => {
+      const rankA = getPositionRank(a);
+      const rankB = getPositionRank(b);
+      if (rankA !== rankB) return rankA - rankB;
+      return (a || "").localeCompare(b || "");
+    });
 
   // Global HR Desk summary KPI details calculated on the fly
   const totalEmployees = state.employees.length;
@@ -1180,6 +1249,19 @@ export default function Employees({
                 <option value="Active">Active ({state.employees.filter(e => !e.isTerminated).length})</option>
                 <option value="Terminated">Terminated ({state.employees.filter(e => !!e.isTerminated).length})</option>
               </select>
+
+              {/* Position hierarchy alignment order selector */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="rounded-xl border border-emerald-500/40 bg-emerald-50/60 dark:bg-slate-950 dark:border-emerald-500/30 px-3 py-2 text-xs font-bold text-emerald-800 dark:text-emerald-300 shadow-xs"
+                title="Align and sort employees list"
+              >
+                <option value="hierarchy">Order: Position Hierarchy (Head Chef → Admin)</option>
+                <option value="id">Order: Serial ID</option>
+                <option value="name">Order: Full Name (A-Z)</option>
+                <option value="salary">Order: Salary (High → Low)</option>
+              </select>
             </div>
           </div>
 
@@ -1244,11 +1326,21 @@ export default function Employees({
             </button>
 
             <button
+              onClick={handleExportDocument}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 px-4 py-2.5 text-xs font-black shadow-sm transition cursor-pointer"
+              title="Export official staff registry document aligned by hierarchy: Head Chef → Chef → Waiter → Waitress → Porter → Admin"
+            >
+              <FileText className="h-4 w-4 text-emerald-400 dark:text-emerald-600" />
+              <span>Export Document</span>
+            </button>
+
+            <button
               onClick={handleExport}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-850 transition cursor-pointer"
+              title="Export staff roster to CSV spreadsheet (aligned by position hierarchy)"
             >
               <Download className="h-4 w-4 text-slate-450" />
-              Export CSV
+              <span>Export CSV</span>
             </button>
           </div>
         </div>
